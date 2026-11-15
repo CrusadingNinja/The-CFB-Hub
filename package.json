@@ -1,0 +1,10 @@
+{
+  "name": "cfb-tracker",
+  "version": "1.0.0",
+  "description": "College Football Tracker powered by ESPN CFB API and Material Design 3",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}

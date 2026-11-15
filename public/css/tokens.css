@@ -1,0 +1,153 @@
+/* Material Design 3 Design Tokens — Gridiron Pulse (Stadium Emerald Tonal Palette) */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Core Color Roles */
+  --md-sys-color-primary: #006c47;
+  --md-sys-color-on-primary: #ffffff;
+  --md-sys-color-primary-container: #89f8c1;
+  --md-sys-color-on-primary-container: #002113;
+
+  --md-sys-color-secondary: #4d6356;
+  --md-sys-color-on-secondary: #ffffff;
+  --md-sys-color-secondary-container: #cfe9d8;
+  --md-sys-color-on-secondary-container: #0a1f15;
+
+  --md-sys-color-tertiary: #3c6472;
+  --md-sys-color-on-tertiary: #ffffff;
+  --md-sys-color-tertiary-container: #c0e9fa;
+  --md-sys-color-on-tertiary-container: #001f28;
+
+  --md-sys-color-error: #ba1a1a;
+  --md-sys-color-on-error: #ffffff;
+  --md-sys-color-error-container: #ffdad6;
+  --md-sys-color-on-error-container: #410002;
+
+  /* Surface & Container Hierarchy */
+  --md-sys-color-surface: #f5fbf5;
+  --md-sys-color-surface-dim: #d6dbd6;
+  --md-sys-color-surface-bright: #f5fbf5;
+  --md-sys-color-surface-container-lowest: #ffffff;
+  --md-sys-color-surface-container-low: #eff5ef;
+  --md-sys-color-surface-container: #eaefea;
+  --md-sys-color-surface-container-high: #e4eae4;
+  --md-sys-color-surface-container-highest: #dee4de;
+
+  --md-sys-color-on-surface: #171d1a;
+  --md-sys-color-on-surface-variant: #404943;
+  --md-sys-color-outline: #707973;
+  --md-sys-color-outline-variant: #bfc9c1;
+  --md-sys-color-scrim: rgba(0, 0, 0, 0.44);
+  --md-sys-color-inverse-surface: #2c322e;
+  --md-sys-color-inverse-on-surface: #ecf2ec;
+  --md-sys-color-inverse-primary: #6cdbac;
+
+  /* Semantic Sports Accents (derived from MD3 tonal roles) */
+  --md-ext-live: #c62828;
+  --md-ext-live-container: #ffdad6;
+  --md-ext-on-live-container: #410002;
+  --md-ext-win: #006c47;
+  --md-ext-win-container: #c5f7dc;
+  --md-ext-on-win-container: #002113;
+  --md-ext-warn-container: #ffebc2;
+  --md-ext-on-warn-container: #382600;
+  --md-ext-turf: #1f5c3a;
+  --md-ext-turf-alt: #256a43;
+  --md-ext-turf-redzone: #8f2d24;
+
+  /* State Layer Opacities */
+  --md-sys-state-hover-opacity: 0.08;
+  --md-sys-state-focus-opacity: 0.10;
+  --md-sys-state-pressed-opacity: 0.10;
+
+  /* Elevation Shadows */
+  --md-sys-elevation-0: none;
+  --md-sys-elevation-1: 0 1px 2px rgba(15, 21, 18, 0.08), 0 1px 3px 1px rgba(15, 21, 18, 0.05);
+  --md-sys-elevation-2: 0 1px 2px rgba(15, 21, 18, 0.1), 0 2px 6px 2px rgba(15, 21, 18, 0.07);
+  --md-sys-elevation-3: 0 4px 8px 3px rgba(15, 21, 18, 0.09), 0 1px 3px rgba(15, 21, 18, 0.12);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --md-sys-color-primary: #6cdbac;
+  --md-sys-color-on-primary: #003823;
+  --md-sys-color-primary-container: #005235;
+  --md-sys-color-on-primary-container: #89f8c1;
+
+  --md-sys-color-secondary: #b4ccbc;
+  --md-sys-color-on-secondary: #1f3529;
+  --md-sys-color-secondary-container: #364b3f;
+  --md-sys-color-on-secondary-container: #cfe9d8;
+
+  --md-sys-color-tertiary: #a4cddc;
+  --md-sys-color-on-tertiary: #063542;
+  --md-sys-color-tertiary-container: #234c5a;
+  --md-sys-color-on-tertiary-container: #c0e9fa;
+
+  --md-sys-color-error: #ffb4ab;
+  --md-sys-color-on-error: #690005;
+  --md-sys-color-error-container: #93000a;
+  --md-sys-color-on-error-container: #ffdad6;
+
+  --md-sys-color-surface: #0f1512;
+  --md-sys-color-surface-dim: #0f1512;
+  --md-sys-color-surface-bright: #353b37;
+  --md-sys-color-surface-container-lowest: #0a0f0d;
+  --md-sys-color-surface-container-low: #171d1a;
+  --md-sys-color-surface-container: #1b211e;
+  --md-sys-color-surface-container-high: #252b28;
+  --md-sys-color-surface-container-highest: #303632;
+
+  --md-sys-color-on-surface: #dee4de;
+  --md-sys-color-on-surface-variant: #bfc9c1;
+  --md-sys-color-outline: #8a938c;
+  --md-sys-color-outline-variant: #404943;
+  --md-sys-color-scrim: rgba(0, 0, 0, 0.62);
+  --md-sys-color-inverse-surface: #dee4de;
+  --md-sys-color-inverse-on-surface: #2c322e;
+  --md-sys-color-inverse-primary: #006c47;
+
+  --md-ext-live: #ff5449;
+  --md-ext-live-container: #7c1315;
+  --md-ext-on-live-container: #ffdad6;
+  --md-ext-win: #6cdbac;
+  --md-ext-win-container: #004e32;
+  --md-ext-on-win-container: #89f8c1;
+  --md-ext-warn-container: #553b00;
+  --md-ext-on-warn-container: #ffdea6;
+  --md-ext-turf: #16442b;
+  --md-ext-turf-alt: #1a4d32;
+  --md-ext-turf-redzone: #6e221b;
+
+  --md-sys-elevation-1: 0 1px 3px 1px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.35);
+  --md-sys-elevation-2: 0 2px 6px 2px rgba(0, 0, 0, 0.34), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --md-sys-elevation-3: 0 6px 12px 4px rgba(0, 0, 0, 0.38), 0 2px 4px rgba(0, 0, 0, 0.44);
+}
+
+:root {
+  /* Shape Scale */
+  --md-sys-shape-corner-extra-small: 4px;
+  --md-sys-shape-corner-small: 8px;
+  --md-sys-shape-corner-medium: 12px;
+  --md-sys-shape-corner-large: 16px;
+  --md-sys-shape-corner-extra-large: 28px;
+  --md-sys-shape-corner-full: 9999px;
+
+  /* Typography Families */
+  --md-sys-typescale-brand-font: 'Plus Jakarta Sans', 'Roboto', system-ui, -apple-system, sans-serif;
+  --md-sys-typescale-plain-font: 'Roboto', system-ui, -apple-system, sans-serif;
+
+  /* Motion */
+  --md-sys-motion-easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --md-sys-motion-easing-emphasized-decelerate: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --md-sys-motion-duration-short: 150ms;
+  --md-sys-motion-duration-medium: 280ms;
+
+  /* Layout */
+  --md-nav-rail-width: 80px;
+  --md-bottom-nav-height: 80px;
+  --md-top-bar-height: 68px;
+}

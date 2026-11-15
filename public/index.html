@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The CFB Hub — College Football Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+  <link rel="stylesheet" href="/css/tokens.css">
+  <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <!-- MD3 Navigation Rail (Tablet / Desktop) -->
+    <nav class="md-nav-rail" aria-label="Primary Navigation">
+      <div class="nav-rail-brand" title="The CFB Hub">
+        <span class="material-symbols-rounded icon-filled">sports_football</span>
+      </div>
+      <div class="nav-rail-items">
+        <button class="md-nav-item active" data-nav="schedule" type="button" aria-label="Schedule">
+          <span class="md-nav-pill">
+            <span class="material-symbols-rounded">calendar_month</span>
+          </span>
+          <span class="md-nav-label">Schedule</span>
+        </button>
+        <button class="md-nav-item" data-nav="live" type="button" aria-label="Live and Play-by-Play">
+          <span class="md-nav-pill">
+            <span class="material-symbols-rounded">sensors</span>
+            <span id="live-nav-badge" class="md-badge hidden">0</span>
+          </span>
+          <span class="md-nav-label">Live</span>
+        </button>
+        <button class="md-nav-item" data-nav="watch" type="button" aria-label="Watch Live Streams">
+          <span class="md-nav-pill">
+            <span class="material-symbols-rounded">live_tv</span>
+            <span id="watch-count-badge" class="md-badge hidden">0</span>
+          </span>
+          <span class="md-nav-label">Watch</span>
+        </button>
+        <button class="md-nav-item" data-nav="standings" type="button" aria-label="Conference Standings">
+          <span class="md-nav-pill">
+            <span class="material-symbols-rounded">leaderboard</span>
+          </span>
+          <span class="md-nav-label">Standings</span>
+        </button>
+        <button class="md-nav-item" data-nav="rankings" type="button" aria-label="Top 25 Rankings">
+          <span class="md-nav-pill">
+            <span class="material-symbols-rounded">military_tech</span>
+          </span>
+          <span class="md-nav-label">Rankings</span>
+        </button>
+        <button class="md-nav-item" data-nav="teams" type="button" aria-label="NCAA Teams">
+          <span class="md-nav-pill">
+            <span class="material-symbols-rounded">groups</span>
+          </span>
+          <span class="md-nav-label">Teams</span>
+        </button>
+      </div>
+    </nav>
+
+    <!-- Main Content Column -->
+    <div class="app-main-wrap">
+      <!-- MD3 Top App Bar -->
+      <header class="md-top-bar">
+        <div class="top-bar-brand">
+          <div class="top-bar-title-group">
+            <h1 class="top-bar-title">The CFB Hub</h1>
+            <span id="top-subtitle" class="top-bar-subtitle">Loading ESPN CFB data...</span>
+          </div>
+        </div>
+
+        <div class="top-bar-actions">
+          <label class="md-search-bar" aria-label="Search teams, games, or conferences">
+            <span class="material-symbols-rounded muted">search</span>
+            <input
+              id="global-search"
+              type="search"
+              placeholder="Search team, matchup, or conference..."
+              autocomplete="off"
+            >
+            <button id="search-clear-btn" class="md-icon-btn small hidden" type="button" aria-label="Clear search" style="display:none;">
+              <span class="material-symbols-rounded" style="font-size:18px;">close</span>
+            </button>
+          </label>
+
+          <button id="auto-refresh-btn" class="live-refresh-pill enabled" type="button" title="Toggle 15-second live polling">
+            <span id="auto-refresh-dot" class="pulse-dot"></span>
+            <span id="auto-refresh-label">Auto 15s</span>
+          </button>
+
+          <button id="refresh-btn" class="md-icon-btn tonal" type="button" title="Refresh data now" aria-label="Refresh data">
+            <span class="material-symbols-rounded">refresh</span>
+          </button>
+
+          <button id="theme-toggle" class="md-icon-btn" type="button" title="Toggle Light / Dark theme" aria-label="Toggle Light or Dark theme">
+            <span id="theme-icon" class="material-symbols-rounded">dark_mode</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Active View Container -->
+      <main id="app-view" class="app-view" tabindex="-1"></main>
+
+      <!-- Persistent Watch / Picture-in-Picture Root -->
+      <section id="watch-persistent-root" class="watch-persistent-root is-hidden" aria-label="Live stream player"></section>
+    </div>
+
+    <!-- MD3 Bottom Navigation Bar (Mobile < 640px) -->
+    <nav class="md-bottom-nav" aria-label="Mobile Navigation">
+      <button class="md-nav-item active" data-nav="schedule" type="button">
+        <span class="md-nav-pill">
+          <span class="material-symbols-rounded">calendar_month</span>
+        </span>
+        <span class="md-nav-label">Schedule</span>
+      </button>
+      <button class="md-nav-item" data-nav="live" type="button">
+        <span class="md-nav-pill">
+          <span class="material-symbols-rounded">sensors</span>
+          <span id="live-mobile-badge" class="md-badge hidden">0</span>
+        </span>
+        <span class="md-nav-label">Live</span>
+      </button>
+      <button class="md-nav-item" data-nav="watch" type="button">
+        <span class="md-nav-pill">
+          <span class="material-symbols-rounded">live_tv</span>
+          <span id="watch-count-badge-mobile" class="md-badge hidden">0</span>
+        </span>
+        <span class="md-nav-label">Watch</span>
+      </button>
+      <button class="md-nav-item" data-nav="standings" type="button">
+        <span class="md-nav-pill">
+          <span class="material-symbols-rounded">leaderboard</span>
+        </span>
+        <span class="md-nav-label">Standings</span>
+      </button>
+      <button class="md-nav-item" data-nav="rankings" type="button">
+        <span class="md-nav-pill">
+          <span class="material-symbols-rounded">military_tech</span>
+        </span>
+        <span class="md-nav-label">Rankings</span>
+      </button>
+      <button class="md-nav-item" data-nav="teams" type="button">
+        <span class="md-nav-pill">
+          <span class="material-symbols-rounded">groups</span>
+        </span>
+        <span class="md-nav-label">Teams</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- MD3 Modal Side Sheet for Game Details -->
+  <aside id="game-sheet-backdrop" class="md-sheet-backdrop" aria-hidden="true"></aside>
+  <section id="game-sheet" class="md-side-sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" aria-hidden="true">
+    <div class="sheet-header">
+      <h2 id="sheet-title" class="sheet-title">Game Center</h2>
+      <button id="sheet-close-btn" class="md-icon-btn" type="button" aria-label="Close game center">
+        <span class="material-symbols-rounded">close</span>
+      </button>
+    </div>
+    <div id="game-sheet-body" class="sheet-body"></div>
+  </section>
+
+  <!-- MD3 Snackbar -->
+  <div id="snackbar" class="md-snackbar" role="status" aria-live="polite"></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
