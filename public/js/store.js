@@ -1,7 +1,7 @@
 // Reactive application state store
 
 const initialState = {
-  route: 'schedule', // 'schedule' | 'live' | 'standings' | 'rankings' | 'teams' | 'watch'
+  route: 'schedule', // 'schedule' | 'live' | 'watch' | 'standings' | 'rankings' | 'teams' | 'transitive'
   theme: 'light',    // 'light' | 'dark'
   searchQuery: '',
   autoRefresh: true,
@@ -114,7 +114,19 @@ const initialState = {
   watchCategoryFilter: 'cfb', // 'cfb' | 'live' | 'football' | 'all'
   watchSearchQuery: '',
 
-  // Modal sheet state (used from Schedule / Standings / Team Page)
+  // Transitive W/Ls state
+  transitiveMode: 'matchup', // 'matchup' | 'farthest'
+  transitiveTeamAId: null,
+  transitiveTeamBId: null,
+  transitiveFarthestTargetScope: 'fbs_fcs', // 'fbs_fcs' | 'fbs' | 'all'
+  transitiveFarthestSchoolDiv: 'all', // 'all' | 'FBS' | 'FCS'
+  transitiveFarthestSort: 'win_desc', // 'win_desc' | 'loss_desc' | 'school_asc'
+  transitiveExpandedSchoolIds: [],
+  transitiveSeasonGraph: null,
+  transitiveLoading: false,
+  transitiveError: null,
+
+  // Modal sheet state (used from Schedule / Standings / Team Page / Transitive W/Ls)
   sheetEventId: null
 };
 

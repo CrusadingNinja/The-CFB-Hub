@@ -45,6 +45,11 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon'
 };
 
+const SEASON_RESULTS_TTL_MS = 300000;
+const espnKeepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
+const seasonResultsCache = new Map();
+const seasonResultsInFlight = new Map();
+
 // Simple in-memory GET cache: url -> { expiresAt, body, statusCode }
 const proxyCache = new Map();
 
@@ -81,6 +86,382 @@ function sendJson(res, statusCode, payload) {
     'Cache-Control': 'no-cache'
   });
   res.end(body);
+}
+
+function decodeHttpBodyBuffer(rawBuffer, contentEncoding) {
+  if (!rawBuffer || rawBuffer.length === 0) return rawBuffer;
+  const enc = String(contentEncoding || '').toLowerCase().trim();
+  if (enc.indexOf('gzip') !== -1 || (!enc && rawBuffer.length >= 2 && rawBuffer[0] === 0x1f && rawBuffer[1] === 0x8b)) {
+    try {
+      return zlib.gunzipSync(rawBuffer);
+    } catch (err) {
+      return rawBuffer;
+    }
+  }
+  if (enc.indexOf('deflate') !== -1) {
+    try {
+      return zlib.inflateSync(rawBuffer);
+    } catch (err) {
+      return rawBuffer;
+    }
+  }
+  if (enc.indexOf('br') !== -1 && typeof zlib.brotliDecompressSync === 'function') {
+    try {
+      return zlib.brotliDecompressSync(rawBuffer);
+    } catch (err) {
+      return rawBuffer;
+    }
+  }
+  return rawBuffer;
+}
+
+function fetchEspnJsonWithAgent(targetUrl, timeoutMs) {
+  return new Promise(function (resolve, reject) {
+    let parsedTarget;
+    try {
+      parsedTarget = new url.URL(targetUrl);
+    } catch (err) {
+      reject(new Error('Invalid ESPN URL: ' + targetUrl));
+      return;
+    }
+    const req = https.get(
+      {
+        protocol: parsedTarget.protocol,
+        hostname: parsedTarget.hostname,
+        port: parsedTarget.port || 443,
+        path: parsedTarget.pathname + parsedTarget.search,
+        agent: espnKeepAliveAgent,
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+          'User-Agent': 'CFB-Tracker/1.0'
+        },
+        timeout: timeoutMs || 15000
+      },
+      function (upstreamRes) {
+        const chunks = [];
+        upstreamRes.on('data', function (chunk) {
+          chunks.push(chunk);
+        });
+        upstreamRes.on('end', function () {
+          const statusCode = upstreamRes.statusCode || 502;
+          const enc = upstreamRes.headers && upstreamRes.headers['content-encoding'];
+          const text = decodeHttpBodyBuffer(Buffer.concat(chunks), enc).toString('utf8');
+          if (statusCode < 200 || statusCode >= 300) {
+            reject(new Error('ESPN HTTP ' + statusCode));
+            return;
+          }
+          try {
+            resolve(JSON.parse(text));
+          } catch (parseErr) {
+            reject(new Error('Invalid ESPN JSON response'));
+          }
+        });
+      }
+    );
+    req.on('timeout', function () {
+      req.abort();
+      const timeoutErr = new Error('Upstream ESPN API request timed out');
+      timeoutErr.isTimeout = true;
+      reject(timeoutErr);
+    });
+    req.on('error', reject);
+  });
+}
+
+function extractServerTeamLogo(team) {
+  if (!team || typeof team !== 'object') return '';
+  const logos = Array.isArray(team.logos) ? team.logos : [];
+  let chosen = '';
+  for (let i = 0; i < logos.length; i++) {
+    const l = logos[i];
+    if (l && Array.isArray(l.rel) && l.rel.indexOf('default') !== -1 && l.rel.indexOf('dark') === -1 && l.href) {
+      chosen = l.href;
+      break;
+    }
+  }
+  if (!chosen && typeof team.logo === 'string' && team.logo) {
+    chosen = team.logo;
+  }
+  if (!chosen) {
+    for (let i = 0; i < logos.length; i++) {
+      const l = logos[i];
+      if (l && (!Array.isArray(l.rel) || l.rel.indexOf('dark') === -1) && l.href) {
+        chosen = l.href;
+        break;
+      }
+    }
+  }
+  if (!chosen && logos[0] && logos[0].href) {
+    chosen = logos[0].href;
+  }
+  return String(chosen || '').replace(/\/500-dark\//gi, '/500/');
+}
+
+function parseCompetitorScore(rawScore) {
+  if (rawScore === undefined || rawScore === null || rawScore === '') return NaN;
+  if (typeof rawScore === 'object') {
+    if (rawScore.value !== undefined && rawScore.value !== null) return Number(rawScore.value);
+    if (rawScore.displayValue !== undefined && rawScore.displayValue !== null) return Number(rawScore.displayValue);
+    return NaN;
+  }
+  return Number(rawScore);
+}
+
+function collectElapsedWeekTasks(calPayload, groupId, cutoffMs) {
+  const tasks = [];
+  const league = calPayload && Array.isArray(calPayload.leagues) ? calPayload.leagues[0] : null;
+  const calendar = league && Array.isArray(league.calendar) ? league.calendar : [];
+
+  for (let i = 0; i < calendar.length; i++) {
+    const sec = calendar[i];
+    const st = sec && sec.value !== undefined ? String(sec.value) : '';
+    if (st !== '2' && st !== '3') continue;
+    const entries = Array.isArray(sec.entries) ? sec.entries : [];
+    for (let j = 0; j < entries.length; j++) {
+      const en = entries[j];
+      if (!en || en.value === undefined) continue;
+      const startMs = en.startDate ? new Date(en.startDate).getTime() : 0;
+      if (!startMs || Number.isNaN(startMs) || startMs <= cutoffMs) {
+        tasks.push({
+          grp: String(groupId),
+          st: st,
+          wk: String(en.value),
+          label: en.label || en.alternateLabel || ('Week ' + en.value)
+        });
+      }
+    }
+  }
+
+  if (tasks.length === 0) {
+    for (let wk = 1; wk <= 16; wk++) {
+      tasks.push({
+        grp: String(groupId),
+        st: '2',
+        wk: String(wk),
+        label: 'Week ' + wk
+      });
+    }
+  }
+  return tasks;
+}
+
+async function fetchSeasonResultsPayload(requestedSeason) {
+  const validSeason = /^\d{4}$/.test(String(requestedSeason || '')) ? String(requestedSeason) : '';
+  const seasonSuffix = validSeason ? '&dates=' + validSeason : '';
+
+  const [s80, s81] = await Promise.all([
+    fetchEspnJsonWithAgent(
+      'https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=80&limit=5' + seasonSuffix,
+      15000
+    ),
+    fetchEspnJsonWithAgent(
+      'https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=81&limit=5' + seasonSuffix,
+      15000
+    ).catch(function () {
+      return {};
+    })
+  ]);
+
+  const seasonYear = Number(
+    validSeason ||
+      (s80 && s80.season && s80.season.year) ||
+      (s80 && s80.leagues && s80.leagues[0] && s80.leagues[0].season && s80.leagues[0].season.year) ||
+      new Date().getFullYear()
+  );
+
+  const cutoffMs = Date.now() + 86400000;
+  const tasks80 = collectElapsedWeekTasks(s80, '80', cutoffMs);
+  const tasks81 = collectElapsedWeekTasks(s81, '81', cutoffMs);
+  const allTasks = tasks80.concat(tasks81);
+
+  const pages = await Promise.all(
+    allTasks.map(function (tk) {
+      const pageUrl =
+        'https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard?groups=' +
+        tk.grp +
+        '&dates=' +
+        seasonYear +
+        '&seasontype=' +
+        tk.st +
+        '&week=' +
+        tk.wk +
+        '&limit=300';
+      return fetchEspnJsonWithAgent(pageUrl, 15000)
+        .then(function (data) {
+          return { tk: tk, events: Array.isArray(data && data.events) ? data.events : [] };
+        })
+        .catch(function () {
+          return { tk: tk, events: [] };
+        });
+    })
+  );
+
+  const seenEventIds = new Set();
+  const teams = {};
+  const games = [];
+
+  for (let p = 0; p < pages.length; p++) {
+    const page = pages[p];
+    const events = page.events;
+    for (let i = 0; i < events.length; i++) {
+      const ev = events[i];
+      if (!ev || !ev.id) continue;
+      const evId = String(ev.id);
+      if (seenEventIds.has(evId)) continue;
+      seenEventIds.add(evId);
+
+      const comp = Array.isArray(ev.competitions) ? ev.competitions[0] : null;
+      const statusObj = ev.status || (comp && comp.status) || {};
+      const stType = statusObj.type || {};
+      if (stType.name === 'STATUS_CANCELED' || stType.name === 'STATUS_POSTPONED') continue;
+      if (!stType.completed && stType.state !== 'post') continue;
+
+      const competitors = comp && Array.isArray(comp.competitors) ? comp.competitors : [];
+      if (competitors.length < 2) continue;
+
+      const cAway = competitors.find(function (c) { return c && c.homeAway === 'away'; }) || competitors[1];
+      const cHome = competitors.find(function (c) { return c && c.homeAway === 'home'; }) || competitors[0];
+      if (!cAway || !cHome) continue;
+
+      const awayTeam = cAway.team || {};
+      const homeTeam = cHome.team || {};
+      const awayId = String(cAway.id || awayTeam.id || '');
+      const homeId = String(cHome.id || homeTeam.id || '');
+      if (!awayId || !homeId || awayId === homeId || /^-\d+$/.test(awayId) || /^-\d+$/.test(homeId)) continue;
+
+      const awayScore = parseCompetitorScore(cAway.score);
+      const homeScore = parseCompetitorScore(cHome.score);
+      if (!Number.isFinite(awayScore) || !Number.isFinite(homeScore) || awayScore === homeScore) continue;
+
+      const homeWon = cHome.winner === true ? true : cAway.winner === true ? false : homeScore > awayScore;
+      const winnerId = homeWon ? homeId : awayId;
+      const loserId = homeWon ? awayId : homeId;
+      const winnerScore = homeWon ? homeScore : awayScore;
+      const loserScore = homeWon ? awayScore : homeScore;
+
+      [
+        { id: awayId, raw: awayTeam },
+        { id: homeId, raw: homeTeam }
+      ].forEach(function (item) {
+        const existing = teams[item.id];
+        const logo = extractServerTeamLogo(item.raw);
+        if (!existing || (!existing.logo && logo)) {
+          teams[item.id] = {
+            id: item.id,
+            displayName: item.raw.displayName || item.raw.location || 'Team',
+            shortName: item.raw.shortDisplayName || item.raw.nickname || item.raw.location || 'Team',
+            location: item.raw.location || '',
+            abbreviation: item.raw.abbreviation || item.raw.shortDisplayName || '',
+            color: item.raw.color ? '#' + String(item.raw.color).replace(/^#/, '') : null,
+            alternateColor: item.raw.alternateColor ? '#' + String(item.raw.alternateColor).replace(/^#/, '') : null,
+            logo: logo || (existing ? existing.logo : '')
+          };
+        }
+      });
+
+      const weekNum = ev.week && ev.week.number ? Number(ev.week.number) : Number(page.tk.wk) || null;
+      const seasonType = String(
+        (ev.seasonType && (ev.seasonType.id || ev.seasonType.type)) ||
+          (ev.season && ev.season.type) ||
+          page.tk.st ||
+          '2'
+      );
+      const weekLabel =
+        (ev.week && (ev.week.text || (ev.week.number ? 'Week ' + ev.week.number : ''))) ||
+        page.tk.label ||
+        (seasonType === '3' ? 'Postseason' : weekNum ? 'Week ' + weekNum : '');
+
+      const awayAbbr = teams[awayId].abbreviation || teams[awayId].shortName || 'AWAY';
+      const homeAbbr = teams[homeId].abbreviation || teams[homeId].shortName || 'HOME';
+
+      games.push({
+        id: evId,
+        date: ev.date || (comp && comp.date) || '',
+        seasonType: seasonType,
+        weekNumber: weekNum,
+        weekLabel: weekLabel,
+        shortName: ev.shortName || (awayAbbr + ' @ ' + homeAbbr),
+        neutralSite: Boolean(comp && comp.neutralSite),
+        winnerId: winnerId,
+        loserId: loserId,
+        winnerScore: winnerScore,
+        loserScore: loserScore,
+        margin: winnerScore - loserScore,
+        homeId: homeId,
+        awayId: awayId,
+        homeScore: homeScore,
+        awayScore: awayScore
+      });
+    }
+  }
+
+  return {
+    seasonYear: seasonYear,
+    generatedAt: Date.now(),
+    completedCount: games.length,
+    teamCount: Object.keys(teams).length,
+    games: games,
+    teams: teams
+  };
+}
+
+function handleSeasonResultsProxy(reqUrl, res) {
+  const parsedQuery = reqUrl.query || {};
+  const requestedSeason = /^\d{4}$/.test(String(parsedQuery.season || '')) ? String(parsedQuery.season) : '';
+  const force = parsedQuery.force === '1';
+  const cacheKey = requestedSeason || 'current';
+
+  if (!force) {
+    const cached = seasonResultsCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'X-Proxy-Cache': 'HIT',
+        'Cache-Control': 'no-cache'
+      });
+      res.end(cached.body);
+      return;
+    }
+  }
+
+  let promise = seasonResultsInFlight.get(cacheKey);
+  if (!promise) {
+    promise = fetchSeasonResultsPayload(requestedSeason).then(
+      function (data) {
+        const body = JSON.stringify(data);
+        seasonResultsCache.set(cacheKey, {
+          body: body,
+          expiresAt: Date.now() + SEASON_RESULTS_TTL_MS
+        });
+        seasonResultsInFlight.delete(cacheKey);
+        return body;
+      },
+      function (err) {
+        seasonResultsInFlight.delete(cacheKey);
+        throw err;
+      }
+    );
+    seasonResultsInFlight.set(cacheKey, promise);
+  }
+
+  promise
+    .then(function (body) {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'X-Proxy-Cache': 'MISS',
+        'Cache-Control': 'no-cache'
+      });
+      res.end(body);
+    })
+    .catch(function (err) {
+      if (!res.headersSent) {
+        sendJson(res, err && err.isTimeout ? 504 : 502, {
+          error: 'Failed to aggregate season results from ESPN',
+          details: err && err.message ? err.message : 'Unknown error'
+        });
+      }
+    });
 }
 
 function handleEspnProxy(reqUrl, res) {
@@ -122,6 +503,7 @@ function handleEspnProxy(reqUrl, res) {
     {
       headers: {
         'Accept': 'application/json',
+        'Accept-Encoding': 'gzip, deflate',
         'User-Agent': 'CFB-Tracker/1.0'
       },
       timeout: 12000
@@ -132,7 +514,9 @@ function handleEspnProxy(reqUrl, res) {
         chunks.push(chunk);
       });
       upstreamRes.on('end', function () {
-        let body = Buffer.concat(chunks).toString('utf8');
+        const rawBuf = Buffer.concat(chunks);
+        const contentEncoding = upstreamRes.headers && upstreamRes.headers['content-encoding'];
+        let body = decodeHttpBodyBuffer(rawBuf, contentEncoding).toString('utf8');
         let statusCode = upstreamRes.statusCode || 502;
         if (isOptional && (statusCode === 404 || statusCode === 400)) {
           statusCode = 200;
@@ -1611,6 +1995,10 @@ function handleServerRequest(req, res) {
   const reqUrl = url.parse(req.url, true);
   if (reqUrl.pathname === '/api/espn') {
     handleEspnProxy(reqUrl, res);
+    return;
+  }
+  if (reqUrl.pathname === '/api/season-results') {
+    handleSeasonResultsProxy(reqUrl, res);
     return;
   }
   if (reqUrl.pathname === '/api/ppv/streams') {

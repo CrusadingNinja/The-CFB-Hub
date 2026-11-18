@@ -140,9 +140,12 @@ select {
 }
 
 .md-nav-label {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
+  text-align: center;
+  line-height: 1.15;
+  padding: 0 4px;
 }
 
 .md-nav-item.active .md-nav-label {
@@ -658,6 +661,17 @@ select {
 
   .md-bottom-nav {
     display: flex;
+    padding: 6px 4px 10px;
+  }
+
+  .md-bottom-nav .md-nav-pill {
+    width: 44px;
+    height: 28px;
+  }
+
+  .md-bottom-nav .md-nav-label {
+    font-size: 10px;
+    padding: 0 2px;
   }
 
   .app-main-wrap {

@@ -5,6 +5,7 @@ import {
   getTeamsDirectory,
   buildTeamsCatalog,
   getTeamPageData,
+  getSeasonResultsGraph,
   getPpvStreams,
   getTheTvAppStreams,
   getStrmFreeStreams,
@@ -16,6 +17,7 @@ import { renderLiveView, refreshLiveDetailPaneOnly } from './views/liveView.js';
 import { renderStandingsView } from './views/standingsView.js';
 import { renderRankingsView } from './views/rankingsView.js';
 import { renderTeamsView } from './views/teamsView.js';
+import { renderTransitiveView } from './views/transitiveView.js';
 import { renderWatchView, toggleWatchFullscreen, openStreamInWatch } from './views/watchView.js';
 import { mountGameDetail } from './views/gameDetail.js';
 import { showSnackbar } from './ui.js';
@@ -48,6 +50,7 @@ let lastLiveSelectedRendered = null;
 let lastRenderedRoute = null;
 let lastRenderedTeamId = null;
 let teamsDirectoryPromise = null;
+let transitiveGraphPromise = null;
 let activeTeamRequestToken = 0;
 let activeRankingsRequestToken = 0;
 let watchAutoPopulated = false;
@@ -158,6 +161,11 @@ function updateChrome(state) {
         const countLabel = state.teamsDirectory.length ? `${state.teamsDirectory.length} ` : '';
         topSubtitleEl.textContent = `${countLabel}NCAA Football Teams Directory`;
       }
+    } else if (state.route === 'transitive') {
+      const yr = state.transitiveSeasonGraph?.seasonYear || state.currentSeasonYear || '';
+      const count = state.transitiveSeasonGraph?.completedCount;
+      const countText = Number.isFinite(count) ? ` · ${count} completed games` : '';
+      topSubtitleEl.textContent = `${yr} Transitive Wins & Losses Explorer${countText}${updatedText}`;
     } else {
       topSubtitleEl.textContent = `${state.currentSeasonYear || ''} ${divText} ${phaseLabel} · ${wkText}${updatedText}`;
     }
@@ -350,6 +358,33 @@ async function loadTeamsDirectory({ force = false } = {}) {
   return teamsDirectoryPromise;
 }
 
+async function loadTransitiveSeasonGraph({ season = null, force = false } = {}) {
+  if (transitiveGraphPromise && !force) {
+    return transitiveGraphPromise;
+  }
+
+  setState({ transitiveLoading: true, transitiveError: null });
+  transitiveGraphPromise = (async () => {
+    try {
+      const graph = await getSeasonResultsGraph({ season, force });
+      setState({
+        transitiveSeasonGraph: graph,
+        transitiveLoading: false,
+        transitiveError: null
+      });
+    } catch (err) {
+      setState({
+        transitiveLoading: false,
+        transitiveError: err.message || 'Failed to load season game results'
+      });
+    } finally {
+      transitiveGraphPromise = null;
+    }
+  })();
+
+  return transitiveGraphPromise;
+}
+
 async function openTeamPage(teamId, { season = null, force = false } = {}) {
   if (!teamId || /^-\d+$/.test(String(teamId))) return;
   const targetId = String(teamId);
@@ -414,7 +449,7 @@ function findEventById(eventId) {
   );
 }
 
-function openGameSheet(eventId) {
+function openGameSheet(eventId, titleHint = '') {
   if (document.fullscreenElement) {
     toggleWatchFullscreen(false);
   }
@@ -422,7 +457,7 @@ function openGameSheet(eventId) {
   setState({ sheetEventId: String(eventId) });
 
   if (sheetTitleEl) {
-    sheetTitleEl.textContent = ev ? ev.shortName : 'Game Center';
+    sheetTitleEl.textContent = ev ? ev.shortName : titleHint || 'Game Center';
   }
   sheetBackdropEl.classList.add('open');
   sheetBackdropEl.setAttribute('aria-hidden', 'false');
@@ -578,6 +613,24 @@ const teamsCallbacks = {
   },
   onOpenGameSheet(eventId) {
     openGameSheet(eventId);
+  }
+};
+
+const transitiveCallbacks = {
+  onSelectTeams({ teamAId, teamBId }) {
+    setState({
+      transitiveTeamAId: teamAId ? String(teamAId) : null,
+      transitiveTeamBId: teamBId ? String(teamBId) : null
+    });
+  },
+  onUpdateTransitiveState(patch) {
+    setState(patch);
+  },
+  onRetrySeasonGraph() {
+    loadTransitiveSeasonGraph({ force: true });
+  },
+  onOpenGameSheet(eventId, shortName = '') {
+    openGameSheet(eventId, shortName);
   }
 };
 
@@ -822,6 +875,9 @@ function renderActiveView(state, { preserveDetailPane = false } = {}) {
   } else if (state.route === 'teams') {
     lastLiveSelectedRendered = null;
     renderTeamsView(appViewEl, teamsCallbacks);
+  } else if (state.route === 'transitive') {
+    lastLiveSelectedRendered = null;
+    renderTransitiveView(appViewEl, transitiveCallbacks);
   }
 
   if (watchRootEl) {
@@ -866,6 +922,11 @@ async function performManualRefresh() {
       } else {
         await loadTeamsDirectory({ force: true });
       }
+    } else if (s.route === 'transitive') {
+      await Promise.all([
+        loadTransitiveSeasonGraph({ force: true }),
+        s.teamsRaw.length === 0 ? loadTeamsDirectory({ force: false }) : Promise.resolve()
+      ]);
     } else if (s.route === 'watch') {
       await Promise.all([
         loadWatchStreams({ force: true }),
@@ -971,6 +1032,17 @@ function wireEvents() {
         loadStandings({ force: false });
       } else if (targetRoute === 'rankings' && !getState().rankingsData) {
         loadRankings({ force: false });
+      } else if (targetRoute === 'transitive') {
+        const curState = getState();
+        if (curState.teamsRaw.length === 0) {
+          loadTeamsDirectory({ force: false });
+        }
+        if (curState.conferences.length === 0) {
+          loadStandings({ force: false });
+        }
+        if (!curState.transitiveSeasonGraph) {
+          loadTransitiveSeasonGraph({ force: false });
+        }
       }
       window.scrollTo({ top: 0, behavior: 'auto' });
     });

@@ -1930,3 +1930,182 @@ export async function getStrmFreeStreams({ force = false } = {}) {
   strmFreeCache.expiresAt = Date.now() + 15000;
   return payload;
 }
+
+async function fetchSeasonResultsClientFallback(season = null, force = false) {
+  const seasonSuffix = /^\d{4}$/.test(String(season || '')) ? `&dates=${season}` : '';
+  const [s80, s81] = await Promise.all([
+    fetchJson(`${BASE}/scoreboard?groups=80&limit=5${seasonSuffix}`, 60000, { force }),
+    fetchJson(`${BASE}/scoreboard?groups=81&limit=5${seasonSuffix}`, 60000, { force }).catch(() => ({}))
+  ]);
+
+  const seasonYear = Number(
+    (/^\d{4}$/.test(String(season || '')) ? season : null) ||
+      s80?.season?.year ||
+      s80?.leagues?.[0]?.season?.year ||
+      new Date().getFullYear()
+  );
+  const cutoffMs = Date.now() + 86400000;
+
+  const collectTasks = (calRes, grp) => {
+    const out = [];
+    const calendar = calRes?.leagues?.[0]?.calendar || [];
+    calendar.forEach((sec) => {
+      const st = String(sec?.value || '');
+      if (st !== '2' && st !== '3') return;
+      (sec.entries || []).forEach((en) => {
+        if (!en || en.value === undefined) return;
+        const startMs = en.startDate ? new Date(en.startDate).getTime() : 0;
+        if (!startMs || Number.isNaN(startMs) || startMs <= cutoffMs) {
+          out.push({ grp, st, wk: String(en.value), label: en.label || `Week ${en.value}` });
+        }
+      });
+    });
+    if (out.length === 0) {
+      for (let wk = 1; wk <= 16; wk += 1) {
+        out.push({ grp, st: '2', wk: String(wk), label: `Week ${wk}` });
+      }
+    }
+    return out;
+  };
+
+  const allTasks = [...collectTasks(s80, '80'), ...collectTasks(s81, '81')];
+  const pages = await Promise.all(
+    allTasks.map((tk) =>
+      fetchJson(
+        `${BASE}/scoreboard?groups=${tk.grp}&dates=${seasonYear}&seasontype=${tk.st}&week=${tk.wk}&limit=300`,
+        300000,
+        { force }
+      )
+        .then((d) => ({ tk, events: d?.events || [] }))
+        .catch(() => ({ tk, events: [] }))
+    )
+  );
+
+  const seenIds = new Set();
+  const teams = {};
+  const games = [];
+
+  pages.forEach(({ tk, events }) => {
+    events.forEach((ev) => {
+      if (!ev?.id) return;
+      const evId = String(ev.id);
+      if (seenIds.has(evId)) return;
+      seenIds.add(evId);
+
+      const comp = ev.competitions?.[0] || {};
+      const stType = ev.status?.type || comp.status?.type || {};
+      if (stType.name === 'STATUS_CANCELED' || stType.name === 'STATUS_POSTPONED') return;
+      if (!stType.completed && stType.state !== 'post') return;
+
+      const competitors = Array.isArray(comp.competitors) ? comp.competitors : [];
+      if (competitors.length < 2) return;
+      const cAway = competitors.find((c) => c?.homeAway === 'away') || competitors[1];
+      const cHome = competitors.find((c) => c?.homeAway === 'home') || competitors[0];
+      const awayTeam = cAway?.team || {};
+      const homeTeam = cHome?.team || {};
+      const awayId = String(cAway?.id || awayTeam.id || '');
+      const homeId = String(cHome?.id || homeTeam.id || '');
+      if (!awayId || !homeId || awayId === homeId || /^-\d+$/.test(awayId) || /^-\d+$/.test(homeId)) return;
+
+      const awayScore = Number(extractScore(cAway?.score));
+      const homeScore = Number(extractScore(cHome?.score));
+      if (!Number.isFinite(awayScore) || !Number.isFinite(homeScore) || awayScore === homeScore) return;
+
+      const homeWon = cHome?.winner === true ? true : cAway?.winner === true ? false : homeScore > awayScore;
+      const winnerId = homeWon ? homeId : awayId;
+      const loserId = homeWon ? awayId : homeId;
+      const winnerScore = homeWon ? homeScore : awayScore;
+      const loserScore = homeWon ? awayScore : homeScore;
+
+      [
+        { id: awayId, raw: awayTeam },
+        { id: homeId, raw: homeTeam }
+      ].forEach(({ id, raw }) => {
+        const existing = teams[id];
+        const { logo } = getLogoUrls(raw);
+        if (!existing || (!existing.logo && logo)) {
+          teams[id] = {
+            id,
+            displayName: raw.displayName || raw.location || 'Team',
+            shortName: raw.shortDisplayName || raw.nickname || raw.location || 'Team',
+            location: raw.location || '',
+            abbreviation: raw.abbreviation || raw.shortDisplayName || '',
+            color: raw.color ? `#${String(raw.color).replace(/^#/, '')}` : null,
+            alternateColor: raw.alternateColor ? `#${String(raw.alternateColor).replace(/^#/, '')}` : null,
+            logo: logo || existing?.logo || ''
+          };
+        }
+      });
+
+      const weekNum = ev.week?.number ? Number(ev.week.number) : Number(tk.wk) || null;
+      const seasonType = String(ev.seasonType?.id || ev.seasonType?.type || ev.season?.type || tk.st || '2');
+      const weekLabel =
+        ev.week?.text ||
+        (ev.week?.number ? `Week ${ev.week.number}` : '') ||
+        tk.label ||
+        (seasonType === '3' ? 'Postseason' : weekNum ? `Week ${weekNum}` : '');
+
+      games.push({
+        id: evId,
+        date: ev.date || comp.date || '',
+        seasonType,
+        weekNumber: weekNum,
+        weekLabel,
+        shortName: ev.shortName || `${teams[awayId].abbreviation || 'AWAY'} @ ${teams[homeId].abbreviation || 'HOME'}`,
+        neutralSite: Boolean(comp.neutralSite),
+        winnerId,
+        loserId,
+        winnerScore,
+        loserScore,
+        margin: winnerScore - loserScore,
+        homeId,
+        awayId,
+        homeScore,
+        awayScore
+      });
+    });
+  });
+
+  return {
+    seasonYear,
+    generatedAt: Date.now(),
+    completedCount: games.length,
+    teamCount: Object.keys(teams).length,
+    games,
+    teams
+  };
+}
+
+export async function getSeasonResultsGraph({ season = null, force = false } = {}) {
+  const validSeason = /^\d{4}$/.test(String(season || '')) ? String(season) : '';
+  const cacheKey = `seasonResults:${validSeason || 'current'}`;
+  const now = Date.now();
+  if (!force) {
+    const cached = clientCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.data;
+    }
+  }
+
+  const params = new URLSearchParams();
+  if (validSeason) params.set('season', validSeason);
+  if (force) params.set('force', '1');
+  const qs = params.toString();
+
+  let data = null;
+  try {
+    const res = await fetch(`/api/season-results${qs ? `?${qs}` : ''}`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    data = await res.json();
+  } catch (err) {
+    data = await fetchSeasonResultsClientFallback(validSeason || null, force);
+  }
+
+  clientCache.set(cacheKey, {
+    data,
+    expiresAt: Date.now() + 300000
+  });
+  return data;
+}
