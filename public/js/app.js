@@ -33,6 +33,7 @@ const autoRefreshLabel = document.getElementById('auto-refresh-label');
 const refreshBtn = document.getElementById('refresh-btn');
 const themeToggleBtn = document.getElementById('theme-toggle');
 const themeIconEl = document.getElementById('theme-icon');
+const navBackBtn = document.getElementById('nav-back-btn');
 const liveNavBadge = document.getElementById('live-nav-badge');
 const liveMobileBadge = document.getElementById('live-mobile-badge');
 const watchNavBadge = document.getElementById('watch-count-badge');
@@ -56,6 +57,160 @@ let activeRankingsRequestToken = 0;
 let watchAutoPopulated = false;
 let lastPpvFetchAt = 0;
 
+const MAX_LINK_HISTORY = 25;
+const linkHistoryStack = [];
+
+function describePageLabel(state) {
+  if (!state) return 'Previous Page';
+  if (state.route === 'teams') {
+    if (state.selectedTeamId) {
+      return (
+        state.teamPageData?.team?.shortName ||
+        state.teamPageData?.team?.displayName ||
+        state.teamsById?.[String(state.selectedTeamId)]?.shortName ||
+        'Team Page'
+      );
+    }
+    return 'Teams';
+  }
+  if (state.route === 'live') return 'Live';
+  if (state.route === 'watch') return 'Watch';
+  if (state.route === 'standings') return 'Standings';
+  if (state.route === 'rankings') return 'Rankings';
+  if (state.route === 'transitive') {
+    return state.transitiveMode === 'farthest' ? 'Farthest Chains' : 'Transitive W/Ls';
+  }
+  return 'Schedule';
+}
+
+function getHistoryPatch() {
+  const len = linkHistoryStack.length;
+  return {
+    canGoBack: len > 0,
+    backPageLabel: len > 0 ? linkHistoryStack[len - 1].label : ''
+  };
+}
+
+function pushLinkHistorySnapshot(prevState = getState()) {
+  if (!prevState) return;
+  const snapshot = {
+    route: prevState.route || 'schedule',
+    label: describePageLabel(prevState),
+    scrollX: window.scrollX || window.pageXOffset || 0,
+    scrollY: window.scrollY || window.pageYOffset || 0,
+    group: prevState.group,
+    seasonType: prevState.seasonType,
+    selectedWeek: prevState.selectedWeek,
+    scheduleFilter: prevState.scheduleFilter
+      ? { ...prevState.scheduleFilter }
+      : { status: 'all', top25Only: false, conferenceId: 'all' },
+    liveDivision: prevState.liveDivision,
+    liveSelectedEventId: prevState.liveSelectedEventId,
+    liveMasterScrollTop: appViewEl.querySelector('.live-master-pane')?.scrollTop || 0,
+    selectedConferenceId: prevState.selectedConferenceId,
+    rankingsSeason: prevState.rankingsSeason,
+    rankingsWeekKey: prevState.rankingsWeekKey,
+    rankingsViewMode: prevState.rankingsViewMode,
+    rankingsConferenceFilter: prevState.rankingsConferenceFilter,
+    selectedTeamId: prevState.selectedTeamId ? String(prevState.selectedTeamId) : null,
+    teamSelectedSeason: prevState.teamSelectedSeason,
+    teamScheduleFilter: prevState.teamScheduleFilter || 'all',
+    teamStatsCategory: prevState.teamStatsCategory || 'all',
+    teamPageData: prevState.teamPageData || null,
+    transitiveMode: prevState.transitiveMode || 'matchup',
+    transitiveTeamAId: prevState.transitiveTeamAId || null,
+    transitiveTeamBId: prevState.transitiveTeamBId || null,
+    transitiveFarthestTargetScope: prevState.transitiveFarthestTargetScope || 'fbs_fcs',
+    transitiveFarthestSchoolDiv: prevState.transitiveFarthestSchoolDiv || 'all',
+    transitiveFarthestSort: prevState.transitiveFarthestSort || 'win_desc',
+    transitiveExpandedSchoolIds: Array.isArray(prevState.transitiveExpandedSchoolIds)
+      ? [...prevState.transitiveExpandedSchoolIds]
+      : [],
+    sheetEventId: prevState.sheetEventId ? String(prevState.sheetEventId) : null,
+    sheetTitle: prevState.sheetEventId && sheetTitleEl ? sheetTitleEl.textContent : ''
+  };
+  linkHistoryStack.push(snapshot);
+  if (linkHistoryStack.length > MAX_LINK_HISTORY) {
+    linkHistoryStack.shift();
+  }
+}
+
+function clearLinkHistory() {
+  linkHistoryStack.length = 0;
+}
+
+async function goBackToPreviousPage() {
+  if (linkHistoryStack.length === 0) return;
+  const cur = getState();
+  if (cur.watchFullscreen) {
+    toggleWatchFullscreen(false);
+  }
+  ++activeTeamRequestToken;
+
+  const snap = linkHistoryStack.pop();
+  if (cur.sheetEventId && !snap.sheetEventId) {
+    closeGameSheet();
+  }
+
+  setState({
+    route: snap.route,
+    group: snap.group,
+    seasonType: snap.seasonType,
+    selectedWeek: snap.selectedWeek,
+    scheduleFilter: snap.scheduleFilter,
+    liveDivision: snap.liveDivision,
+    liveSelectedEventId: snap.liveSelectedEventId,
+    selectedConferenceId: snap.selectedConferenceId,
+    rankingsSeason: snap.rankingsSeason,
+    rankingsWeekKey: snap.rankingsWeekKey,
+    rankingsViewMode: snap.rankingsViewMode,
+    rankingsConferenceFilter: snap.rankingsConferenceFilter,
+    selectedTeamId: snap.selectedTeamId,
+    teamSelectedSeason: snap.teamSelectedSeason,
+    teamScheduleFilter: snap.teamScheduleFilter,
+    teamStatsCategory: snap.teamStatsCategory,
+    teamPageData: snap.teamPageData,
+    teamPageLoading: false,
+    teamPageError: null,
+    transitiveMode: snap.transitiveMode,
+    transitiveTeamAId: snap.transitiveTeamAId,
+    transitiveTeamBId: snap.transitiveTeamBId,
+    transitiveFarthestTargetScope: snap.transitiveFarthestTargetScope,
+    transitiveFarthestSchoolDiv: snap.transitiveFarthestSchoolDiv,
+    transitiveFarthestSort: snap.transitiveFarthestSort,
+    transitiveExpandedSchoolIds: snap.transitiveExpandedSchoolIds,
+    ...getHistoryPatch()
+  });
+
+  const restoreScrolls = () => {
+    if (snap.route === 'live') {
+      const masterPane = appViewEl.querySelector('.live-master-pane');
+      if (masterPane && Number.isFinite(snap.liveMasterScrollTop)) {
+        masterPane.scrollTop = snap.liveMasterScrollTop;
+      }
+    }
+    window.scrollTo({ left: snap.scrollX || 0, top: snap.scrollY || 0, behavior: 'auto' });
+  };
+
+  restoreScrolls();
+  requestAnimationFrame(restoreScrolls);
+
+  if (snap.route === 'teams' && snap.selectedTeamId && !snap.teamPageData) {
+    await openTeamPage(snap.selectedTeamId, { season: snap.teamSelectedSeason, recordHistory: false });
+    restoreScrolls();
+  } else if (snap.route === 'schedule') {
+    const targetKey = `${snap.group}:${snap.seasonType}:${snap.selectedWeek}`;
+    if (lastScheduleLoadKey !== targetKey) {
+      await loadScoreboard({ group: snap.group, seasonType: snap.seasonType, week: snap.selectedWeek, force: false });
+      restoreScrolls();
+    }
+  }
+
+  if (snap.sheetEventId) {
+    openGameSheet(snap.sheetEventId, snap.sheetTitle);
+  }
+}
+
 function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   localStorage.setItem('cfb-theme', theme);
@@ -73,6 +228,14 @@ function initTheme() {
 }
 
 function updateChrome(state) {
+  // Back to previous page button
+  if (navBackBtn) {
+    navBackBtn.classList.toggle('hidden', !state.canGoBack);
+    navBackBtn.title = state.backPageLabel
+      ? `Back to Previous Page (${state.backPageLabel})`
+      : 'Back to Previous Page';
+  }
+
   // Navigation active states
   document.querySelectorAll('[data-nav]').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.nav === state.route);
@@ -385,11 +548,18 @@ async function loadTransitiveSeasonGraph({ season = null, force = false } = {}) 
   return transitiveGraphPromise;
 }
 
-async function openTeamPage(teamId, { season = null, force = false } = {}) {
+async function openTeamPage(teamId, { season = null, force = false, recordHistory = true } = {}) {
   if (!teamId || /^-\d+$/.test(String(teamId))) return;
   const targetId = String(teamId);
   const reqToken = ++activeTeamRequestToken;
   const prev = getState();
+
+  const shouldPushHistory =
+    recordHistory &&
+    !(prev.route === 'teams' && String(prev.selectedTeamId || '') === targetId && !prev.sheetEventId);
+  if (shouldPushHistory) {
+    pushLinkHistorySnapshot(prev);
+  }
 
   if (prev.sheetEventId) {
     closeGameSheet();
@@ -413,7 +583,8 @@ async function openTeamPage(teamId, { season = null, force = false } = {}) {
     teamScheduleFilter: isSameTeam ? prev.teamScheduleFilter : 'all',
     teamPageData: isSameTeam ? prev.teamPageData : null,
     teamPageLoading: true,
-    teamPageError: null
+    teamPageError: null,
+    ...getHistoryPatch()
   });
   window.scrollTo({ top: 0, behavior: 'auto' });
 
@@ -499,6 +670,9 @@ function findStreamByHints(state, streamId, streamSource) {
 
 async function openWatchForEvent({ eventId, streamId = null, streamSource = null }) {
   const curBefore = getState();
+  if (curBefore.route !== 'watch' || curBefore.sheetEventId) {
+    pushLinkHistorySnapshot(curBefore);
+  }
   if (curBefore.sheetEventId) {
     closeGameSheet();
   }
@@ -524,13 +698,14 @@ async function openWatchForEvent({ eventId, streamId = null, streamSource = null
   if (stream) {
     watchAutoPopulated = true;
     const res = openStreamInWatch(stream);
+    setState(getHistoryPatch());
     window.scrollTo({ top: 0, behavior: 'auto' });
     const slotNum = res ? res.slotIndex + 1 : 1;
     showSnackbar(`Loaded ${stream.name} (${stream.sourceLabel}) in Slot #${slotNum}`);
     return;
   }
 
-  setState({ route: 'watch', watchPipMinimized: false });
+  setState({ route: 'watch', watchPipMinimized: false, ...getHistoryPatch() });
   window.scrollTo({ top: 0, behavior: 'auto' });
   showSnackbar(
     ev?.shortName || ev?.name
@@ -605,10 +780,14 @@ const teamsCallbacks = {
     openTeamPage(teamId, { season, ...opts });
   },
   onChangeSeason(teamId, seasonYear) {
-    openTeamPage(teamId, { season: seasonYear, force: false });
+    openTeamPage(teamId, { season: seasonYear, force: false, recordHistory: false });
   },
   onBackToDirectory() {
-    setState({ selectedTeamId: null, teamPageError: null });
+    const top = linkHistoryStack[linkHistoryStack.length - 1];
+    if (top && top.route === 'teams' && !top.selectedTeamId) {
+      linkHistoryStack.pop();
+    }
+    setState({ selectedTeamId: null, teamPageError: null, ...getHistoryPatch() });
     window.scrollTo({ top: 0, behavior: 'auto' });
   },
   onOpenGameSheet(eventId) {
@@ -626,6 +805,17 @@ const transitiveCallbacks = {
   onUpdateTransitiveState(patch) {
     setState(patch);
   },
+  onNavigateToMatchup({ teamAId, teamBId }) {
+    pushLinkHistorySnapshot(getState());
+    setState({
+      route: 'transitive',
+      transitiveMode: 'matchup',
+      transitiveTeamAId: teamAId ? String(teamAId) : null,
+      transitiveTeamBId: teamBId ? String(teamBId) : null,
+      ...getHistoryPatch()
+    });
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  },
   onRetrySeasonGraph() {
     loadTransitiveSeasonGraph({ force: true });
   },
@@ -635,6 +825,19 @@ const transitiveCallbacks = {
 };
 
 const watchCallbacks = {
+  onExpandPipToWatch() {
+    const cur = getState();
+    if (cur.route !== 'watch') {
+      pushLinkHistorySnapshot(cur);
+    }
+    setState({
+      route: 'watch',
+      watchPipMinimized: false,
+      watchPlayerActive: true,
+      ...getHistoryPatch()
+    });
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  },
   onRetryPpv() {
     loadWatchStreams({ force: true });
   },
@@ -918,7 +1121,7 @@ async function performManualRefresh() {
       refreshLiveDetailPaneOnly(appViewEl, true);
     } else if (s.route === 'teams') {
       if (s.selectedTeamId) {
-        await openTeamPage(s.selectedTeamId, { season: s.teamSelectedSeason, force: true });
+        await openTeamPage(s.selectedTeamId, { season: s.teamSelectedSeason, force: true, recordHistory: false });
       } else {
         await loadTeamsDirectory({ force: true });
       }
@@ -998,11 +1201,18 @@ function startPolling() {
 }
 
 function wireEvents() {
+  if (navBackBtn) {
+    navBackBtn.addEventListener('click', () => {
+      goBackToPreviousPage();
+    });
+  }
+
   // Navigation rail & bottom bar
   document.querySelectorAll('[data-nav]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const targetRoute = btn.dataset.nav;
       const prev = getState();
+      clearLinkHistory();
       if (prev.watchFullscreen && targetRoute !== 'watch') {
         toggleWatchFullscreen(false);
       }
@@ -1010,7 +1220,8 @@ function wireEvents() {
         const shouldResetTeam = prev.route === 'teams' && prev.selectedTeamId;
         setState({
           route: 'teams',
-          ...(shouldResetTeam ? { selectedTeamId: null, teamPageError: null } : {})
+          ...(shouldResetTeam ? { selectedTeamId: null, teamPageError: null } : {}),
+          ...getHistoryPatch()
         });
         if (prev.teamsRaw.length === 0) {
           loadTeamsDirectory({ force: false });
@@ -1019,10 +1230,11 @@ function wireEvents() {
         setState({
           route: 'watch',
           watchPipMinimized: false,
-          ...(hasActiveWatchStreams(prev) ? { watchPlayerActive: true } : {})
+          ...(hasActiveWatchStreams(prev) ? { watchPlayerActive: true } : {}),
+          ...getHistoryPatch()
         });
       } else {
-        setState({ route: targetRoute });
+        setState({ route: targetRoute, ...getHistoryPatch() });
       }
       if (targetRoute === 'live') {
         loadLiveSlate({ force: true, silent: true });

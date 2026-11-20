@@ -2,6 +2,8 @@
 
 const initialState = {
   route: 'schedule', // 'schedule' | 'live' | 'watch' | 'standings' | 'rankings' | 'teams' | 'transitive'
+  canGoBack: false,
+  backPageLabel: '',
   theme: 'light',    // 'light' | 'dark'
   searchQuery: '',
   autoRefresh: true,

@@ -769,7 +769,7 @@ function renderTeamPage(container, state, callbacks, focusSnap) {
   container.innerHTML = `
     <div class="team-nav-bar">
       <button class="md-btn md-btn-tonal" type="button" id="back-to-teams-btn">
-        <span class="material-symbols-rounded" style="font-size:18px;">arrow_back</span>
+        <span class="material-symbols-rounded" style="font-size:18px;">${state.canGoBack ? 'groups' : 'arrow_back'}</span>
         All NCAA Teams
       </button>
 

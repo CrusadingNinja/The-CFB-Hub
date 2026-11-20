@@ -1164,11 +1164,19 @@ export function renderTransitiveView(container, callbacks) {
 
         const compareBtn = e.target.closest?.('[data-compare-a]');
         if (compareBtn) {
-          callbacks.onUpdateTransitiveState?.({
-            transitiveMode: 'matchup',
-            transitiveTeamAId: compareBtn.dataset.compareA,
-            transitiveTeamBId: compareBtn.dataset.compareB
-          });
+          const payload = {
+            teamAId: compareBtn.dataset.compareA,
+            teamBId: compareBtn.dataset.compareB
+          };
+          if (callbacks.onNavigateToMatchup) {
+            callbacks.onNavigateToMatchup(payload);
+          } else {
+            callbacks.onUpdateTransitiveState?.({
+              transitiveMode: 'matchup',
+              transitiveTeamAId: payload.teamAId,
+              transitiveTeamBId: payload.teamBId
+            });
+          }
           return;
         }
 

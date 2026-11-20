@@ -1667,8 +1667,12 @@ export function renderWatchView(container, callbacks) {
       const pipExpandBtn = pipBarHost.querySelector('#watch-pip-expand-btn');
       if (pipExpandBtn) {
         pipExpandBtn.addEventListener('click', () => {
-          setState({ route: 'watch', watchPipMinimized: false, watchPlayerActive: true });
-          window.scrollTo({ top: 0, behavior: 'auto' });
+          if (callbacks?.onExpandPipToWatch) {
+            callbacks.onExpandPipToWatch();
+          } else {
+            setState({ route: 'watch', watchPipMinimized: false, watchPlayerActive: true });
+            window.scrollTo({ top: 0, behavior: 'auto' });
+          }
         });
       }
 
