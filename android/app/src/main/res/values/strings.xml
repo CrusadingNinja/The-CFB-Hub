@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">The CFB Hub</string>
+    <string name="error_title">Unable to reach The CFB Hub</string>
+    <string name="error_message">Check your internet connection and try again.</string>
+    <string name="action_retry">Retry</string>
+    <string name="action_reload">Reload Page</string>
+    <string name="error_icon_desc">Connection error</string>
+</resources>

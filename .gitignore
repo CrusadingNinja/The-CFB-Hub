@@ -2,3 +2,13 @@ node_modules/
 .netlify
 .env
 .env.*
+
+# Android Gradle & IDE build artifacts
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+*.jks
+*.keystore
