@@ -4,7 +4,7 @@ import {
   escapeHtml,
   renderTeamLogo,
   renderRankBadge,
-  formatKickoffTime,
+  formatEventKickoff,
   formatDayHeading,
   getLocalDateKey
 } from '../ui.js';
@@ -18,7 +18,7 @@ export function renderGameCard(ev, theme) {
   const isPost = ev.state === 'post';
 
   const statusPillClass = isLive ? 'live' : isPre ? 'pre' : 'post';
-  const statusLabel = isPre ? formatKickoffTime(ev.date) : ev.statusDetail || (isLive ? 'LIVE' : 'Final');
+  const statusLabel = isPre ? formatEventKickoff(ev) : ev.statusDetail || (isLive ? 'LIVE' : 'Final');
 
   const awayPoss = isLive && ev.situation?.possession === ev.away.id;
   const homePoss = isLive && ev.situation?.possession === ev.home.id;
@@ -41,7 +41,7 @@ export function renderGameCard(ev, theme) {
   return `
     <button class="md-card md-card-interactive game-card${isLive ? ' is-live' : ''}" type="button" data-open-game="${escapeHtml(ev.id)}">
       <div class="game-card-top">
-        <span class="status-pill ${statusPillClass}">
+        <span class="status-pill ${statusPillClass}" title="${escapeHtml(statusLabel)}">
           ${isLive ? '<span class="pulse-dot live"></span>' : ''}
           ${escapeHtml(statusLabel)}
         </span>
@@ -155,6 +155,7 @@ function getFilteredEvents(state) {
         ev.home.displayName,
         ev.home.abbreviation,
         ev.headline,
+        ev.flexTimeSlot,
         ev.broadcast,
         awayConf,
         homeConf
@@ -199,10 +200,10 @@ export function renderScheduleView(container, callbacks) {
   // Group non-live games by local day
   const byDay = new Map();
   nonLiveGames.forEach((ev) => {
-    const key = getLocalDateKey(ev.date);
+    const key = getLocalDateKey(ev.date, { timeValid: ev.timeValid });
     if (!byDay.has(key)) {
       byDay.set(key, {
-        heading: formatDayHeading(ev.date),
+        heading: formatDayHeading(ev.date, { timeValid: ev.timeValid }),
         games: []
       });
     }

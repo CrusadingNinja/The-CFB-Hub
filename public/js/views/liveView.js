@@ -6,6 +6,8 @@ import {
   renderTeamLogo,
   renderRankBadge,
   formatKickoffTime,
+  formatEventKickoff,
+  isKickoffTimeTbd,
   formatCountdown
 } from '../ui.js';
 
@@ -17,7 +19,9 @@ function renderSelectorItem(ev, isSelected, theme) {
   const matchedStream = isLive ? findStreamForEspnEvent(ev, getState()) : null;
 
   const statusText = isPre
-    ? `${formatKickoffTime(ev.date)} · ${formatCountdown(ev.date)}`
+    ? isKickoffTimeTbd(ev)
+      ? formatEventKickoff(ev)
+      : `${formatKickoffTime(ev.date)} · ${formatCountdown(ev.date)}`
     : ev.statusDetail || (isLive ? 'LIVE' : 'Final');
 
   return `

@@ -1,4 +1,5 @@
 // ESPN College Football API client & normalizers
+import { parseGameNotes, getLocalDateKey } from './ui.js';
 
 const BASE = 'https://site.api.espn.com/apis/site/v2/sports/football/college-football';
 const clientCache = new Map();
@@ -205,11 +206,17 @@ function normalizeEvent(ev) {
       }
     : null;
 
+  const rawStatusText = `${statusObj.type?.shortDetail || ''} ${statusObj.type?.detail || ''}`;
+  const timeValid = comp.timeValid !== false && !/\b(?:tbd|tba)\b/i.test(rawStatusText);
+  const { flexTimeSlot, headline } = parseGameNotes(comp.notes);
+
   return {
     id: String(ev.id),
     name: ev.name || `${away.shortName} at ${home.shortName}`,
     shortName: ev.shortName || `${away.abbreviation} @ ${home.abbreviation}`,
     date: ev.date || comp.date || '',
+    timeValid,
+    flexTimeSlot,
     seasonTypeId,
     seasonTypeName: ev?.seasonType?.name || (seasonTypeId === '3' ? 'Postseason' : 'Regular Season'),
     weekNumber: ev?.week?.number ? Number(ev.week.number) : null,
@@ -224,7 +231,7 @@ function normalizeEvent(ev) {
     conferenceCompetition: Boolean(comp.conferenceCompetition),
     playByPlayAvailable: Boolean(comp.playByPlayAvailable),
     broadcast,
-    headline: comp.notes?.[0]?.headline || '',
+    headline,
     venue: {
       name: comp.venue?.fullName || '',
       city: comp.venue?.address?.city || '',
@@ -280,11 +287,24 @@ export async function getScoreboard({ seasonType = null, week = null, group = '8
   const calendar = normalizeCalendar(raw?.leagues?.[0]?.calendar);
   const events = Array.isArray(raw?.events) ? raw.events.map(normalizeEvent) : [];
 
-  // Sort: live first, then chronological kickoff, then final
+  // Sort: live first, then chronological kickoff (with TBD slots after confirmed times on the same day), then final
   const stateOrder = { in: 0, pre: 1, post: 2 };
   events.sort((a, b) => {
     const orderDiff = (stateOrder[a.state] ?? 1) - (stateOrder[b.state] ?? 1);
     if (orderDiff !== 0) return orderDiff;
+    if (a.state === 'pre') {
+      const dayA = getLocalDateKey(a.date, { timeValid: a.timeValid });
+      const dayB = getLocalDateKey(b.date, { timeValid: b.timeValid });
+      if (dayA !== dayB) return dayA.localeCompare(dayB);
+      const aTbd = a.timeValid === false ? 1 : 0;
+      const bTbd = b.timeValid === false ? 1 : 0;
+      if (aTbd !== bTbd) return aTbd - bTbd;
+      if (aTbd && bTbd) {
+        const aHasFlex = a.flexTimeSlot ? 0 : 1;
+        const bHasFlex = b.flexTimeSlot ? 0 : 1;
+        if (aHasFlex !== bHasFlex) return aHasFlex - bHasFlex;
+      }
+    }
     return new Date(a.date).getTime() - new Date(b.date).getTime();
   });
 
@@ -511,9 +531,16 @@ export async function getGameSummary(eventId, { force = false } = {}) {
       }
     : null;
 
+  const rawStatusText = `${statusObj.type?.shortDetail || ''} ${statusObj.type?.detail || ''}`;
+  const timeValid = comp.timeValid !== false && !/\b(?:tbd|tba)\b/i.test(rawStatusText);
+  const { flexTimeSlot, headline } = parseGameNotes(comp.notes, raw?.header?.gameNote || '');
+
   return {
     id: String(eventId),
     date: comp.date || '',
+    timeValid,
+    flexTimeSlot,
+    headline,
     state,
     statusDetail: statusObj.type?.shortDetail || statusObj.type?.detail || '',
     period: statusObj.period || 0,

@@ -45,6 +45,56 @@ export function renderRankBadge(rank) {
   return `<span class="rank-badge">#${rank}</span>`;
 }
 
+function isTimeWindowNote(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (/^(?:flex|early|afternoon|night|late|prime|midday|window)\s*:/i.test(t)) return true;
+  if (/\b(?:am|pm|noon)\b.*\b(?:et|ct|mt|pt|est|edt|start|kickoff|window)\b/i.test(t)) return true;
+  if (/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*[-–/]\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i.test(t)) return true;
+  return false;
+}
+
+function cleanFlexTimeSlot(text) {
+  return String(text || '')
+    .trim()
+    .replace(/\s+start\s*$/i, '')
+    .trim();
+}
+
+export function parseGameNotes(notes, fallbackGameNote = '') {
+  const candidates = [];
+  if (Array.isArray(notes)) {
+    notes.forEach((n) => {
+      const text = String(n?.headline || '').trim();
+      if (text) candidates.push(text);
+    });
+  }
+  const extra = String(fallbackGameNote || '').trim();
+  if (extra && !candidates.includes(extra)) {
+    candidates.push(extra);
+  }
+
+  let flexTimeSlot = '';
+  let headline = '';
+  for (const text of candidates) {
+    if (isTimeWindowNote(text)) {
+      if (!flexTimeSlot) flexTimeSlot = cleanFlexTimeSlot(text);
+    } else if (!headline) {
+      headline = text;
+    }
+  }
+  return { flexTimeSlot, headline };
+}
+
+export function isKickoffTimeTbd(ev) {
+  if (!ev) return true;
+  if (ev.timeValid === false) return true;
+  if (/\b(?:tbd|tba)\b/i.test(String(ev.statusDetail || ''))) return true;
+  if (!ev.date) return true;
+  const d = new Date(ev.date);
+  return Number.isNaN(d.getTime());
+}
+
 export function formatKickoffTime(isoDate) {
   if (!isoDate) return 'TBD';
   const d = new Date(isoDate);
@@ -55,21 +105,44 @@ export function formatKickoffTime(isoDate) {
   }).format(d);
 }
 
-export function formatDayHeading(isoDate) {
+export function formatEventKickoff(ev) {
+  if (isKickoffTimeTbd(ev)) {
+    return ev?.flexTimeSlot || 'TBD';
+  }
+  return formatKickoffTime(ev.date);
+}
+
+export function formatDayHeading(isoDate, { timeValid = true } = {}) {
   if (!isoDate) return 'Scheduled';
   const d = new Date(isoDate);
   if (Number.isNaN(d.getTime())) return 'Scheduled';
-  return new Intl.DateTimeFormat(undefined, {
+  const opts = {
     weekday: 'long',
     month: 'short',
     day: 'numeric'
-  }).format(d);
+  };
+  if (timeValid === false) {
+    opts.timeZone = 'America/New_York';
+  }
+  return new Intl.DateTimeFormat(undefined, opts).format(d);
 }
 
-export function getLocalDateKey(isoDate) {
+export function getLocalDateKey(isoDate, { timeValid = true } = {}) {
   if (!isoDate) return 'tbd';
   const d = new Date(isoDate);
   if (Number.isNaN(d.getTime())) return 'tbd';
+  if (timeValid === false) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(d);
+    const y = parts.find((p) => p.type === 'year')?.value;
+    const m = parts.find((p) => p.type === 'month')?.value;
+    const day = parts.find((p) => p.type === 'day')?.value;
+    if (y && m && day) return `${y}-${m}-${day}`;
+  }
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');

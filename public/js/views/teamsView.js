@@ -3,7 +3,7 @@ import {
   escapeHtml,
   renderTeamLogo,
   renderRankBadge,
-  formatKickoffTime,
+  formatEventKickoff,
   formatDayHeading
 } from '../ui.js';
 import { POWER_4_CONFERENCE_IDS } from './scheduleView.js';
@@ -456,7 +456,7 @@ function renderSeasonScheduleRow(ev, { theme, isCurrentSeason, rankMap, liveEven
   const opp = ev.opponent;
   const oppRank = opp.rank || (ev.isFuture && isCurrentSeason ? rankMap[opp.id] : null);
   const canLinkOpp = isValidTeamId(opp.id);
-  const dateLabel = formatDayHeading(ev.date);
+  const dateLabel = formatDayHeading(ev.date, { timeValid: ev.timeValid });
   const badgeText =
     ev.seasonTypeId === '3'
       ? ev.weekText || 'Postseason'
@@ -492,7 +492,7 @@ function renderSeasonScheduleRow(ev, { theme, isCurrentSeason, rankMap, liveEven
       </div>
     `;
   } else {
-    const kickoff = ev.statusDetail && /tbd/i.test(ev.statusDetail) ? 'TBD' : formatKickoffTime(ev.date);
+    const kickoff = formatEventKickoff(ev);
     outcomeHtml = `
       <div class="team-sched-outcome">
         <div class="team-sched-future-meta">

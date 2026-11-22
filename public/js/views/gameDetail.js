@@ -4,7 +4,7 @@ import {
   escapeHtml,
   renderTeamLogo,
   renderRankBadge,
-  formatKickoffTime,
+  formatEventKickoff,
   formatDayHeading,
   quarterLabel
 } from '../ui.js';
@@ -841,8 +841,19 @@ function renderGameDetailMarkup(summary, eventPreview, uiState, theme) {
   const isLive = summary.state === 'in';
   const pillClass = isLive ? 'live' : isPre ? 'pre' : 'post';
 
+  const mergedKickoffEvent = {
+    date: summary.date || eventPreview?.date || '',
+    timeValid:
+      summary.timeValid === false ||
+      (eventPreview?.timeValid === false &&
+        !/\b\d{1,2}:\d{2}\s*[ap]m\b/i.test(String(summary.statusDetail || '')))
+        ? false
+        : true,
+    statusDetail: summary.statusDetail || eventPreview?.statusDetail || '',
+    flexTimeSlot: summary.flexTimeSlot || eventPreview?.flexTimeSlot || ''
+  };
   const statusText = isPre
-    ? `${formatDayHeading(summary.date)} · ${formatKickoffTime(summary.date)}`
+    ? `${formatDayHeading(mergedKickoffEvent.date, { timeValid: mergedKickoffEvent.timeValid })} · ${formatEventKickoff(mergedKickoffEvent)}`
     : summary.statusDetail || (isLive ? 'LIVE' : 'Final');
 
   const venueParts = [summary.venue.name, summary.venue.city, summary.venue.state].filter(Boolean);
