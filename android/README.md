@@ -1,44 +1,38 @@
-# The CFB Hub — Android App
+# The CFB Hub — Native Android App
 
-Native Android Kotlin WebView wrapper (`com.thecfbhub.app`) for **The CFB Hub** web application hosted at `https://thecfbhub.netlify.app/`.
+Full Native Kotlin + Jetpack Compose Android application (`com.thecfbhub.app`, `v2.0.0`) for **The CFB Hub** with direct ESPN College Football API integration and Netlify backend support (`https://thecfbhub.netlify.app`).
 
-## Features
-- Full parity across all 7 tabs (`Schedule`, `Live`, `Watch`, `Standings`, `Rankings`, `Teams`, and `Transitive W/Ls`)
-- Edge-to-edge layout with Light/Dark status and navigation bar theme sync matching the in-app Stadium Emerald theme toggle
-- Smart hardware back navigation: closes Game Center modal sheets, exits Watch multistream fullscreen, triggers the web app's in-app `#nav-back-btn` / `#back-to-teams-btn` before WebView history
-- Pull-to-refresh triggering the in-app data refresh without interrupting active Watch streams
-- Fullscreen HTML5 `<video>` playback support and popup blocking for third-party stream embeds
-- Chrome Custom Tabs for external `http`/`https` links and HTTPS deep-link intent handling for `https://thecfbhub.netlify.app/`
+## Native Screens & Features
+- **Schedule**: FBS/FCS division toggle, Regular Season/Postseason phases, horizontal Week Strip, Status/Top-25/Conference filters, pull-to-refresh, chronological ordering, and FLEX/TBD kickoff formatting (`America/New_York` anchored when `timeValid == false`)
+- **Live**: Live scoreboard monitor with pulsing indicators, down-and-distance/Red Zone situations, 15s background-safe auto-refresh, and upcoming slate
+- **Watch**: Native stream directory across `ppv.st`, `thetvapp.plus`, and `strmfree.pk` with multi-feed switching, fullscreen WebView video playback, and Chrome Custom Tabs fallback
+- **Standings**: FBS conference tables sortable by seed, win percentage, point differential, and streak
+- **Rankings**: CFP & AP Top 25 polls across seasons and weekly releases with ranking delta badges, conference filters, and others receiving votes
+- **Teams**: Searchable NCAA FBS/FCS directory and native Team Pages (hero banner, record splits, season selector, schedule, and team/opponent season statistics)
+- **Transitive W/Ls**: On-device Kotlin shortest-degree diverse transitive chain solver (`TransitiveEngine`) supporting up to 5 Win chains and 5 Loss chains (`Degree n`) plus the **Farthest Chains by School** eccentricity leaderboard
+- **Game Center**: Material Design 3 Modal Bottom Sheet with quarter-by-quarter linescore, Play-by-Play drives, Scoring Plays, Boxscore comparison bars, and Team Leaders
+- **In-App Navigation & Theme**: Link-history **Back** button, smart Android hardware back handling, global search, and persistent Light/Dark Stadium Emerald MD3 theme
 
 ## Requirements
 - JDK 17 or newer (JDK 21 compatible)
-- Android SDK Platform `36` (`platforms/android-36`) and `build-tools/36.0.0` (plus `platform-tools` / `adb`)
+- Android SDK Platform `36` (`platforms/android-36`), `build-tools/36.0.0`, and `platform-tools` (`adb`)
 - `android/local.properties` pointing `sdk.dir` to your local Android SDK directory
 
 ## Build & Test
 From `android/`:
 
 ```powershell
-# Run JVM unit tests and build the debug APK
-.\gradlew.bat testDebugUnitTest assembleDebug
+# Run JVM unit tests and compile the debug APK
+.\gradlew.bat testDebugUnitTest --rerun assembleDebug --no-daemon
 
 # Build a release APK (unsigned unless signing config is added)
 .\gradlew.bat assembleRelease
 ```
 
-The generated debug APK will be located at:
+Debug APK output:
 `android/app/build/outputs/apk/debug/app-debug.apk`
 
-## Install & Launch on Device or Emulator
-Connect an Android device with USB debugging enabled (or start an AVD), then run from `android/` or the repo root:
-
+## Install on Device
 ```powershell
-# Using adb
 adb install -r android\app\build\outputs\apk\debug\app-debug.apk
-
-# Or using Android CLI from android/
-android run
 ```
-
-## Changing the Hosted URL
-Update `buildConfigField("String", "APP_URL", "\"https://thecfbhub.netlify.app/\"")` inside `android/app/build.gradle.kts`, and update the `<data android:host="..." />` deep-link filter in `android/app/src/main/AndroidManifest.xml` if changing the domain.

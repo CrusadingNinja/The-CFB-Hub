@@ -448,6 +448,9 @@ async function loadStandings({ force = false } = {}) {
 async function loadRankings({ season = null, week = null, seasonType = null, force = false } = {}) {
   const reqToken = ++activeRankingsRequestToken;
   setState({ rankingsLoading: true, rankingsError: null });
+  if (getState().teamsRaw.length === 0) {
+    loadTeamsDirectory({ force: false });
+  }
   try {
     const data = await getWeeklyRankings({ season, week, seasonType, force });
     if (reqToken !== activeRankingsRequestToken) {

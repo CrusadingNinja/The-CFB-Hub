@@ -23,18 +23,131 @@ function isGroupOf6Team(row, conferenceMap) {
   );
 }
 
-function computeCfpPlayoffInfo(allRanks, conferenceMap) {
+function normalizeTeamMatchKey(name) {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function teamMatchesCandidate(entry, normTarget, altTarget) {
+  if (!entry || !normTarget) return 0;
+  const fields = [entry.location, entry.shortName, entry.displayName]
+    .map(normalizeTeamMatchKey)
+    .filter(Boolean);
+
+  for (const f of fields) {
+    if (f === normTarget || f === altTarget) return 4;
+  }
+  for (const f of fields) {
+    if (f.startsWith(`${normTarget} `) || f.startsWith(`${altTarget} `)) return 3;
+  }
+  return 0;
+}
+
+export function resolveCommitteeUnrankedG6Team(
+  committeeSelection,
+  { droppedOut = [], others = [], teamsDirectory = [], conferenceMap = {} } = {}
+) {
+  const rawName = String(committeeSelection?.teamName || '').trim();
+  if (!rawName) return null;
+
+  const normTarget = normalizeTeamMatchKey(rawName);
+  const altTarget = normTarget.includes(' state')
+    ? normTarget.replace(/\bstate\b/g, 'st')
+    : normTarget.replace(/\bst\b/g, 'state');
+
+  const pollCandidates = [...(droppedOut || []), ...(others || [])];
+  let bestPoll = null;
+  let bestPollScore = 0;
+  for (const entry of pollCandidates) {
+    const score = teamMatchesCandidate(entry, normTarget, altTarget);
+    if (score > bestPollScore) {
+      bestPollScore = score;
+      bestPoll = entry;
+    }
+  }
+
+  let bestDir = null;
+  let bestDirScore = 0;
+  for (const entry of teamsDirectory || []) {
+    if (bestPoll?.id && String(entry.id) === String(bestPoll.id)) {
+      bestDir = entry;
+      break;
+    }
+    const baseScore = teamMatchesCandidate(entry, normTarget, altTarget);
+    if (baseScore === 0) continue;
+    let totalScore = baseScore * 10;
+    if (entry.division === 'FBS') totalScore += 3;
+    if (isGroupOf6Team(entry, conferenceMap)) totalScore += 2;
+    if (totalScore > bestDirScore) {
+      bestDirScore = totalScore;
+      bestDir = entry;
+    }
+  }
+
+  const cid = bestPoll?.conferenceId || bestDir?.conferenceId || null;
+  const conferenceShortName =
+    bestPoll?.conferenceShortName ||
+    bestDir?.conferenceShortName ||
+    (cid ? conferenceMap?.[cid]?.shortName || '' : '');
+
+  return {
+    id: bestPoll?.id || bestDir?.id || '',
+    displayName: bestPoll?.displayName || bestDir?.displayName || rawName,
+    shortName: bestPoll?.shortName || bestDir?.shortName || rawName,
+    abbreviation:
+      bestPoll?.abbreviation ||
+      bestDir?.abbreviation ||
+      rawName.replace(/[^A-Za-z]/g, '').slice(0, 4).toUpperCase() ||
+      'G6',
+    logo: bestPoll?.logo || bestDir?.logo || '',
+    logoDark: bestPoll?.logoDark || bestDir?.logoDark || '',
+    color: bestPoll?.color || bestDir?.color || null,
+    conferenceId: cid,
+    conferenceShortName,
+    recordSummary: bestPoll?.recordSummary || bestDir?.overallRecord || '',
+    previous: Number(bestPoll?.previous || 0),
+    sourceUrl: committeeSelection?.sourceUrl || '',
+    releaseDate: committeeSelection?.releaseDate || '',
+    excerpt: committeeSelection?.excerpt || ''
+  };
+}
+
+export function computeCfpPlayoffInfo(
+  allRanks,
+  conferenceMap,
+  committeeUnrankedG6 = null,
+  lookupCtx = null
+) {
   const ranked = (allRanks || [])
     .filter((r) => Number(r.current) > 0)
     .slice()
     .sort((a, b) => a.current - b.current);
   const topG6Team = ranked.find((r) => isGroupOf6Team(r, conferenceMap)) || null;
-  const g6OutsideTop12 = Boolean(topG6Team && topG6Team.current > 12);
+  const hasRankedG6InTop12 = Boolean(topG6Team && topG6Team.current <= 12);
+  const g6Unranked = ranked.length >= 12 && !topG6Team;
+  const g6OutsideTop12 = ranked.length >= 12 && !hasRankedG6InTop12;
   const cutoffRank = g6OutsideTop12 ? 11 : 12;
+  const committeeG6Team =
+    g6Unranked && committeeUnrankedG6?.teamName
+      ? resolveCommitteeUnrankedG6Team(committeeUnrankedG6, {
+          ...(lookupCtx || {}),
+          conferenceMap
+        })
+      : null;
+
   return {
     topG6Team,
     g6OutsideTop12,
-    cutoffRank
+    g6Unranked,
+    cutoffRank,
+    committeeG6Team
   };
 }
 
@@ -172,6 +285,7 @@ function renderPollCard(
     confFilter,
     searchQuery,
     conferenceMap,
+    teamsDirectory,
     activeWeekLabel,
     activeWeekKey,
     latestWeekKey,
@@ -234,7 +348,13 @@ function renderPollCard(
   const filteredRanks = allRanks.filter((row) =>
     matchesFilters(row, confFilter, searchQuery, conferenceMap)
   );
-  const cfpInfo = isCfp ? computeCfpPlayoffInfo(allRanks, conferenceMap) : null;
+  const cfpInfo = isCfp
+    ? computeCfpPlayoffInfo(allRanks, conferenceMap, poll.committeeUnrankedG6 || null, {
+        droppedOut: poll.droppedOut || [],
+        others: poll.others || [],
+        teamsDirectory: teamsDirectory || []
+      })
+    : null;
   const showCutline =
     isCfp &&
     confFilter === 'all' &&
@@ -250,6 +370,15 @@ function renderPollCard(
     } else {
       cfpLegendText = `Top 12 Playoff Field (#${cfpInfo.topG6Team.current} ${cfpInfo.topG6Team.shortName} G6)`;
       cfpLegendTitle = `Top 12 CFP Rankings Field includes top-ranked Group of 6 team (#${cfpInfo.topG6Team.current} ${cfpInfo.topG6Team.displayName})`;
+    }
+  } else if (isCfp && cfpInfo?.g6Unranked) {
+    if (cfpInfo.committeeG6Team) {
+      cfpLegendText = `Cutoff: Top 11 + ${cfpInfo.committeeG6Team.shortName} (NR · G6)`;
+      cfpLegendTitle = `Per the CFP Selection Committee, unranked ${cfpInfo.committeeG6Team.displayName} claims the automatic Group of 6 Playoff slot, setting the at-large cutoff at Top 11`;
+    } else {
+      cfpLegendText = 'Cutoff: Top 11 + Top G6 Team (Unranked)';
+      cfpLegendTitle =
+        'No Group of 6 team is ranked in the CFP Top 25 — the top-ranked Group of 6 team as determined by the committee still claims an automatic Playoff slot, setting the cutoff at Top 11';
     }
   }
 
@@ -349,7 +478,13 @@ function renderPollCard(
                               }
                               ${
                                 isBumpedOut
-                                  ? `<span class="cfp-bid-pill first-out" title="Outside playoff cutoff because #${cfpInfo.topG6Team.current} ${escapeHtml(cfpInfo.topG6Team.displayName)} claims the Group of 6 automatic slot">Bumped by G6 Bid</span>`
+                                  ? `<span class="cfp-bid-pill first-out" title="${escapeHtml(
+                                      cfpInfo?.topG6Team
+                                        ? `Outside playoff cutoff because #${cfpInfo.topG6Team.current} ${cfpInfo.topG6Team.displayName} claims the Group of 6 automatic slot`
+                                        : cfpInfo?.committeeG6Team
+                                          ? `Outside playoff cutoff because unranked ${cfpInfo.committeeG6Team.displayName} claims the Group of 6 automatic slot per the CFP Selection Committee`
+                                          : 'Outside playoff cutoff because the top-ranked Group of 6 team as determined by the committee claims an automatic Playoff slot'
+                                    )}">Bumped by G6 Bid</span>`
                                   : ''
                               }
                               ${
@@ -384,7 +519,11 @@ function renderPollCard(
                             <span>${
                               cfpInfo.g6OutsideTop12 && cfpInfo.topG6Team
                                 ? `Playoff Cutoff (Top 11) · #${cfpInfo.topG6Team.current} ${escapeHtml(cfpInfo.topG6Team.shortName)} claims the 12th Playoff slot as Top Group of 6 team`
-                                : '12-Team Playoff Cutoff'
+                                : cfpInfo.g6Unranked && cfpInfo.committeeG6Team
+                                  ? `Playoff Cutoff (Top 11) · ${escapeHtml(cfpInfo.committeeG6Team.shortName)} (Unranked) claims the 12th Playoff slot per CFP Committee`
+                                  : cfpInfo.g6Unranked
+                                    ? 'Playoff Cutoff (Top 11) · Top Group of 6 team (Unranked) claims the 12th Playoff slot as determined by the committee'
+                                    : '12-Team Playoff Cutoff'
                             }</span>
                           </div>
                         </td>
@@ -395,6 +534,86 @@ function renderPollCard(
                   `;
                 })
                 .join('')}
+              ${
+                isCfp && cfpInfo?.g6Unranked && confFilter === 'all' && !searchQuery.trim()
+                  ? (() => {
+                      const g6 = cfpInfo.committeeG6Team;
+                      if (g6) {
+                        const subtitleParts = [
+                          g6.conferenceShortName || '',
+                          'Unranked',
+                          'CFP Committee Projected G6 Bid'
+                        ].filter(Boolean);
+                        const bidTitle = g6.excerpt
+                          ? `CFP Selection Committee: "${g6.excerpt}"`
+                          : 'Guaranteed Group of 6 Playoff slot per CFP Selection Committee';
+                        return `
+                <tr class="rankings-row cfp-g6-playoff-row">
+                  <td style="text-align:center;">
+                    <span class="rank-number-pill top-12 tabular">NR</span>
+                  </td>
+                  <td>
+                    <div class="rankings-team-cell">
+                      ${renderTeamLogo(g6, { size: 'sm', theme })}
+                      <div class="rankings-team-meta">
+                        <div class="rankings-team-name-line">
+                          ${
+                            g6.id
+                              ? `<span
+                                  class="rankings-team-name team-page-link"
+                                  data-team-id="${escapeHtml(g6.id)}"
+                                  role="link"
+                                  tabindex="0"
+                                  title="Open ${escapeHtml(g6.displayName)} team page"
+                                >${escapeHtml(g6.shortName)}</span>`
+                              : `<span class="rankings-team-name">${escapeHtml(g6.shortName)}</span>`
+                          }
+                          <span class="cfp-bid-pill g6-bid" title="${escapeHtml(bidTitle)}">G6 Playoff Slot</span>
+                        </div>
+                        <span class="rankings-team-conf">${escapeHtml(subtitleParts.join(' · '))}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td style="text-align:right;" class="tabular">
+                    <strong>${escapeHtml(g6.recordSummary || '—')}</strong>
+                  </td>
+                  <td style="text-align:right;">
+                    <div class="rank-trend-cell">
+                      <span class="rank-trend-pill new">Auto-Bid</span>
+                      ${g6.previous > 0 ? `<span class="rank-prev-text">Prev #${g6.previous}</span>` : ''}
+                    </div>
+                  </td>
+                </tr>
+              `;
+                      }
+                      return `
+                <tr class="rankings-row cfp-g6-playoff-row">
+                  <td style="text-align:center;">
+                    <span class="rank-number-pill top-12 tabular">NR</span>
+                  </td>
+                  <td>
+                    <div class="rankings-team-cell">
+                      <span class="team-logo-wrap sm"><span class="team-logo-fallback" style="background:var(--md-sys-color-primary);">G6</span></span>
+                      <div class="rankings-team-meta">
+                        <div class="rankings-team-name-line">
+                          <span class="rankings-team-name">Top Group of 6 Team</span>
+                          <span class="cfp-bid-pill g6-bid" title="Guaranteed Group of 6 Playoff slot as determined by the CFP Selection Committee">G6 Playoff Slot</span>
+                        </div>
+                        <span class="rankings-team-conf">Unranked · Highest-ranked G6 team as determined by CFP Committee</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td style="text-align:right;" class="tabular">—</td>
+                  <td style="text-align:right;">
+                    <div class="rank-trend-cell">
+                      <span class="rank-trend-pill new">Auto-Bid</span>
+                    </div>
+                  </td>
+                </tr>
+              `;
+                    })()
+                  : ''
+              }
             </tbody>
           </table>
         </div>
@@ -424,6 +643,7 @@ export function renderRankingsView(container, callbacks) {
     currentSeasonYear,
     conferences,
     conferenceMap,
+    teamsDirectory,
     searchQuery,
     rankingsSeason,
     rankingsWeekKey,
@@ -589,6 +809,7 @@ export function renderRankingsView(container, callbacks) {
                 confFilter: rankingsConferenceFilter,
                 searchQuery,
                 conferenceMap,
+                teamsDirectory,
                 activeWeekLabel,
                 activeWeekKey,
                 latestWeekKey: rankingsLatestWeekKey,
@@ -604,6 +825,7 @@ export function renderRankingsView(container, callbacks) {
                 confFilter: rankingsConferenceFilter,
                 searchQuery,
                 conferenceMap,
+                teamsDirectory,
                 activeWeekLabel,
                 activeWeekKey,
                 latestWeekKey: rankingsLatestWeekKey,

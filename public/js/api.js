@@ -878,6 +878,59 @@ function normalizeSinglePoll(rawPoll, { isPreseasonCarryover = false } = {}) {
   };
 }
 
+const CFP_POWER_4_IDS = new Set(['1', '4', '5', '8']);
+const CFP_GROUP_OF_6_IDS = new Set(['9', '12', '15', '17', '37', '151']);
+
+function pollHasRankedGroupOf6Team(ranks) {
+  return (Array.isArray(ranks) ? ranks : []).some((r) => {
+    if (!(Number(r?.current) > 0)) return false;
+    const cid = String(r.conferenceId || '').trim();
+    if (cid) {
+      if (CFP_GROUP_OF_6_IDS.has(cid)) return true;
+      return !CFP_POWER_4_IDS.has(cid) && cid !== '18';
+    }
+    return /^(Pac-12|American|AAC|Mountain West|MWC|Sun Belt|SBC|MAC|Mid-American|CUSA|Conf\.?\s*USA)$/i.test(
+      String(r.conferenceShortName || '').trim()
+    );
+  });
+}
+
+export async function getCfpCommitteeG6Selection({
+  season = '',
+  week = '',
+  pollDate = '',
+  force = false
+} = {}) {
+  const params = new URLSearchParams();
+  if (season) params.set('season', String(season));
+  if (week) params.set('week', String(week));
+  if (pollDate) params.set('date', String(pollDate));
+  const qs = params.toString();
+  const baseUrl = `/api/cfp-g6-selection${qs ? `?${qs}` : ''}`;
+
+  if (!force) {
+    const cached = clientCache.get(baseUrl);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.data;
+    }
+  }
+
+  try {
+    const fetchUrl = force ? `${baseUrl}${qs ? '&' : '?'}force=1` : baseUrl;
+    const res = await fetch(fetchUrl);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (clientCache.size > 150) clientCache.clear();
+    clientCache.set(baseUrl, {
+      data,
+      expiresAt: Date.now() + 600000
+    });
+    return data;
+  } catch (err) {
+    return null;
+  }
+}
+
 export async function getWeeklyRankings({ season = null, week = null, seasonType = null, force = false } = {}) {
   const params = new URLSearchParams();
   if (season) params.set('seasons', String(season));
@@ -917,6 +970,17 @@ export async function getWeeklyRankings({ season = null, week = null, seasonType
 
   const cfpPoll = normalizeSinglePoll(rawCfp);
   const apPoll = normalizeSinglePoll(rawAp, { isPreseasonCarryover });
+
+  if (cfpPoll && cfpPoll.ranks.length >= 12 && !pollHasRankedGroupOf6Team(cfpPoll.ranks)) {
+    const committeeG6 = await getCfpCommitteeG6Selection({
+      season: seasonYear,
+      week: cfpPoll.occurrenceWeek || week || '',
+      pollDate: cfpPoll.date || '',
+      force
+    });
+    cfpPoll.committeeUnrankedG6 =
+      committeeG6 && committeeG6.found && committeeG6.teamName ? committeeG6 : null;
+  }
 
   let activeWeekKey = '';
   if (week && seasonType) {

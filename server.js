@@ -50,6 +50,12 @@ const espnKeepAliveAgent = new https.Agent({ keepAlive: true, maxSockets: 16 });
 const seasonResultsCache = new Map();
 const seasonResultsInFlight = new Map();
 
+const CFP_ORIGIN = 'https://collegefootballplayoff.com';
+const CFP_G6_FOUND_TTL_MS = 30 * 60 * 1000;
+const CFP_G6_MISS_TTL_MS = 5 * 60 * 1000;
+const cfpG6Cache = new Map();
+const cfpG6InFlight = new Map();
+
 // Simple in-memory GET cache: url -> { expiresAt, body, statusCode }
 const proxyCache = new Map();
 
@@ -2001,6 +2007,10 @@ function handleServerRequest(req, res) {
     handleSeasonResultsProxy(reqUrl, res);
     return;
   }
+  if (reqUrl.pathname === '/api/cfp-g6-selection') {
+    handleCfpG6SelectionProxy(reqUrl, res);
+    return;
+  }
   if (reqUrl.pathname === '/api/ppv/streams') {
     handlePpvProxy(reqUrl, res);
     return;
@@ -2096,8 +2106,312 @@ if (require.main === module && !process.env.NETLIFY && !process.env.AWS_LAMBDA_F
   });
 }
 
+// ==================== CFP COMMITTEE UNRANKED G6 SELECTION ====================
+
+function extractCfpArticlePlainText(html) {
+  const rawHtml = String(html || '');
+  const parts = [];
+  const nuxtMatch = rawHtml.match(/<script[^>]*id="__NUXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
+  if (nuxtMatch && nuxtMatch[1]) {
+    try {
+      const arr = JSON.parse(nuxtMatch[1]);
+      if (Array.isArray(arr)) {
+        for (let i = 0; i < arr.length; i++) {
+          if (typeof arr[i] === 'string' && arr[i].length > 40) {
+            parts.push(stripHtmlTags(arr[i]));
+          }
+        }
+      }
+    } catch (err) {
+      // Ignore malformed __NUXT_DATA__ and fall back to HTML body text
+    }
+  }
+  parts.push(stripHtmlTags(rawHtml));
+  return parts.join('\n');
+}
+
+function cleanCommitteeTeamName(rawName) {
+  let cleaned = decodeHtmlEntities(String(rawName || ''))
+    .replace(/\u00a0/g, ' ')
+    .replace(/^[\s"'“‘(\[]+/, '')
+    .replace(/[\s"'”’)\],.;:!?]+$/, '')
+    .replace(/^the\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned || cleaned.length > 45) return '';
+  if (cleaned.split(' ').length > 5) return '';
+  if (/^(team|club|squad|school|program|conference|group|winner|champion|best|top|remaining)\b/i.test(cleaned)) {
+    return '';
+  }
+  return cleaned;
+}
+
+function parseCommitteeG6SelectionFromText(plainText) {
+  const text = String(plainText || '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+
+  const patterns = [
+    /\b(?:The\s+)?CFP\s+selection\s+committee\s+selected\s+([A-Za-z0-9.&'’\-\s]{2,45}?)\s+as\s+the\s+(?:best|highest[- ]ranked|top)\s+team\s+from\s+the\s+(?:remaining|Group\s+of\s+(?:Five|Six|5|6))\s+conferences\b/i,
+    /\b([A-Za-z0-9.&'’\-\s]{2,45}?)\s+(?:remained|remains|is|was\s+selected\s+as|holds(?:\s+on)?\s+as|earned\s+the\s+spot\s+as)\s+the\s+(?:highest[- ]ranked|top|best)\s+team\s+from\s+the\s+(?:Group\s+of\s+(?:Six|Five|6|5)|remaining\s+conferences)\b/i,
+    /\bprojected\s+No\.?\s*12\s+seed\s+(?:is\s+)?([A-Za-z0-9.&'’\-\s]{2,45}?)(?:\s*\(|[.,;])/i
+  ];
+
+  for (let i = 0; i < patterns.length; i++) {
+    const m = text.match(patterns[i]);
+    if (m && m[1]) {
+      const candidate = cleanCommitteeTeamName(m[1]);
+      if (candidate) {
+        return {
+          teamName: candidate,
+          excerpt: m[0].replace(/\s+/g, ' ').trim()
+        };
+      }
+    }
+  }
+  return null;
+}
+
+function buildCfpDateCandidates(dateStr) {
+  const urls = [];
+  const seen = new Set();
+  const parsed = dateStr ? new Date(dateStr) : null;
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    return urls;
+  }
+
+  const tuples = [];
+  const tupleKeys = new Set();
+  const pushTuple = function (d) {
+    const y = d.getUTCFullYear();
+    const m = d.getUTCMonth() + 1;
+    const day = d.getUTCDate();
+    const k = y + '-' + m + '-' + day;
+    if (!tupleKeys.has(k)) {
+      tupleKeys.add(k);
+      tuples.push({
+        y: String(y),
+        m: String(m),
+        d: String(day),
+        mm: String(m < 10 ? '0' + m : m),
+        dd: String(day < 10 ? '0' + day : day),
+        iso: String(y) + '-' + String(m < 10 ? '0' + m : m) + '-' + String(day < 10 ? '0' + day : day)
+      });
+    }
+  };
+
+  pushTuple(parsed);
+  pushTuple(new Date(parsed.getTime() - 5 * 3600 * 1000));
+
+  const addSlug = function (slug) {
+    for (let i = 0; i < tuples.length; i++) {
+      const t = tuples[i];
+      const rawPath = '/news/' + t.y + '/' + t.m + '/' + t.d + '/' + slug;
+      if (!seen.has(rawPath)) {
+        seen.add(rawPath);
+        urls.push({ url: CFP_ORIGIN + rawPath, isMain: slug === 'rankings', releaseDate: t.iso });
+      }
+      const paddedPath = '/news/' + t.y + '/' + t.mm + '/' + t.dd + '/' + slug;
+      if (!seen.has(paddedPath)) {
+        seen.add(paddedPath);
+        urls.push({ url: CFP_ORIGIN + paddedPath, isMain: slug === 'rankings', releaseDate: t.iso });
+      }
+    }
+  };
+
+  addSlug('rankings');
+  addSlug('inside-rankings');
+  return urls;
+}
+
+function extractReleaseDateFromUrl(urlStr) {
+  const m = String(urlStr || '').match(/\/news\/(\d{4})\/(\d{1,2})\/(\d{1,2})\//);
+  if (!m) return null;
+  const mm = m[2].length === 1 ? '0' + m[2] : m[2];
+  const dd = m[3].length === 1 ? '0' + m[3] : m[3];
+  return m[1] + '-' + mm + '-' + dd;
+}
+
+async function fetchCfpCommitteeG6Selection(season, week, dateStr) {
+  const emptyResult = {
+    found: false,
+    teamName: null,
+    sourceUrl: null,
+    releaseDate: null,
+    excerpt: '',
+    sourceLabel: 'CFP Selection Committee'
+  };
+
+  const candidates = buildCfpDateCandidates(dateStr);
+  let sawDirectMainPage = false;
+
+  for (let i = 0; i < candidates.length; i++) {
+    const c = candidates[i];
+    try {
+      const resp = await fetchHttpText(c.url, {}, 10000);
+      if (resp && resp.statusCode >= 200 && resp.statusCode < 300 && resp.body) {
+        if (c.isMain) sawDirectMainPage = true;
+        const plain = extractCfpArticlePlainText(resp.body);
+        const parsed = parseCommitteeG6SelectionFromText(plain);
+        if (parsed && parsed.teamName) {
+          const finalUrl = resp.finalUrl || c.url;
+          return {
+            found: true,
+            teamName: parsed.teamName,
+            sourceUrl: finalUrl,
+            releaseDate: extractReleaseDateFromUrl(finalUrl) || c.releaseDate,
+            excerpt: parsed.excerpt,
+            sourceLabel: 'CFP Selection Committee'
+          };
+        }
+      }
+    } catch (err) {
+      // Try next candidate URL
+    }
+  }
+
+  if (sawDirectMainPage) {
+    return emptyResult;
+  }
+
+  const targetMs = dateStr ? new Date(dateStr).getTime() : NaN;
+  const seasonStr = /^\d{4}$/.test(String(season || '')) ? String(season) : '';
+  const triedUrls = new Set(candidates.map(function (c) { return c.url; }));
+  const discovered = [];
+  const discoveredSeen = new Set();
+
+  const indexPages = await Promise.all([
+    fetchHttpText(CFP_ORIGIN + '/', {}, 10000).catch(function () { return null; }),
+    fetchHttpText(CFP_ORIGIN + '/rankings', {}, 10000).catch(function () { return null; })
+  ]);
+
+  const linkRe = /\/news\/(\d{4})\/(\d{1,2})\/(\d{1,2})\/([a-z0-9\-]*rankings[a-z0-9\-]*)/gi;
+  for (let p = 0; p < indexPages.length; p++) {
+    const page = indexPages[p];
+    if (!page || page.statusCode < 200 || page.statusCode >= 300 || !page.body) continue;
+    let m;
+    while ((m = linkRe.exec(page.body)) !== null) {
+      const yr = m[1];
+      if (seasonStr && yr !== seasonStr) continue;
+      const mo = Number(m[2]);
+      const da = Number(m[3]);
+      const slug = m[4].toLowerCase();
+      const fullUrl = CFP_ORIGIN + m[0];
+      if (triedUrls.has(fullUrl) || discoveredSeen.has(fullUrl)) continue;
+      const linkMs = Date.UTC(Number(yr), mo - 1, da, 12, 0, 0);
+      const dayDelta = Number.isFinite(targetMs)
+        ? Math.abs(linkMs - targetMs) / 86400000
+        : 0;
+      if (Number.isFinite(targetMs) && dayDelta > 4.5) continue;
+      discoveredSeen.add(fullUrl);
+      discovered.push({
+        url: fullUrl,
+        isMain: slug === 'rankings' ? 0 : 1,
+        dayDelta: dayDelta
+      });
+    }
+  }
+
+  discovered.sort(function (a, b) {
+    if (Math.abs(a.dayDelta - b.dayDelta) > 0.2) return a.dayDelta - b.dayDelta;
+    return a.isMain - b.isMain;
+  });
+
+  const maxToCheck = Math.min(discovered.length, 2);
+  for (let i = 0; i < maxToCheck; i++) {
+    const item = discovered[i];
+    try {
+      const resp = await fetchHttpText(item.url, {}, 10000);
+      if (resp && resp.statusCode >= 200 && resp.statusCode < 300 && resp.body) {
+        const plain = extractCfpArticlePlainText(resp.body);
+        const parsed = parseCommitteeG6SelectionFromText(plain);
+        if (parsed && parsed.teamName) {
+          const finalUrl = resp.finalUrl || item.url;
+          return {
+            found: true,
+            teamName: parsed.teamName,
+            sourceUrl: finalUrl,
+            releaseDate: extractReleaseDateFromUrl(finalUrl),
+            excerpt: parsed.excerpt,
+            sourceLabel: 'CFP Selection Committee'
+          };
+        }
+      }
+    } catch (err) {
+      // Ignore failed discovered article
+    }
+  }
+
+  return emptyResult;
+}
+
+function handleCfpG6SelectionProxy(reqUrl, res) {
+  const parsedQuery = reqUrl.query || {};
+  const season = /^\d{4}$/.test(String(parsedQuery.season || '')) ? String(parsedQuery.season) : '';
+  const week = String(parsedQuery.week || '').trim();
+  const dateStr = String(parsedQuery.date || '').trim();
+  const force = parsedQuery.force === '1';
+  const cacheKey = season + ':' + week + ':' + dateStr;
+
+  if (!force) {
+    const cached = cfpG6Cache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'X-Proxy-Cache': 'HIT',
+        'Cache-Control': 'no-cache'
+      });
+      res.end(cached.body);
+      return;
+    }
+  }
+
+  let promise = cfpG6InFlight.get(cacheKey);
+  if (!promise) {
+    promise = fetchCfpCommitteeG6Selection(season, week, dateStr)
+      .then(function (data) {
+        const ttl = data && data.found ? CFP_G6_FOUND_TTL_MS : CFP_G6_MISS_TTL_MS;
+        const body = JSON.stringify(data);
+        if (cfpG6Cache.size > 100) cfpG6Cache.clear();
+        cfpG6Cache.set(cacheKey, {
+          body: body,
+          expiresAt: Date.now() + ttl
+        });
+        cfpG6InFlight.delete(cacheKey);
+        return body;
+      })
+      .catch(function (err) {
+        cfpG6InFlight.delete(cacheKey);
+        return JSON.stringify({
+          found: false,
+          teamName: null,
+          sourceUrl: null,
+          releaseDate: null,
+          excerpt: '',
+          sourceLabel: 'CFP Selection Committee',
+          error: err && err.message ? err.message : 'Lookup failed'
+        });
+      });
+    cfpG6InFlight.set(cacheKey, promise);
+  }
+
+  promise.then(function (body) {
+    if (!res.headersSent) {
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'X-Proxy-Cache': 'MISS',
+        'Cache-Control': 'no-cache'
+      });
+      res.end(body);
+    }
+  });
+}
+
 module.exports = {
   server: server,
   handleServerRequest: handleServerRequest,
-  dispatchApiRequest: dispatchApiRequest
+  dispatchApiRequest: dispatchApiRequest,
+  extractCfpArticlePlainText: extractCfpArticlePlainText,
+  parseCommitteeG6SelectionFromText: parseCommitteeG6SelectionFromText
 };
