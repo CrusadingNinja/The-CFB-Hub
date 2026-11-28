@@ -127,7 +127,7 @@ fun LiveScreen(
               ev,
               state.watchSource,
               state.ppvCatalog.streams,
-              state.tvAppCatalog.streams,
+              state.timStreamsCatalog.streams,
               state.strmFreeCatalog.streams
             ) != null
             GameCard(

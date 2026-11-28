@@ -1987,13 +1987,13 @@ object EspnJsonParser {
     event: GameEvent?,
     preferredSource: String,
     ppvStreams: List<WatchStream>,
-    tvAppStreams: List<WatchStream>,
+    timStreams: List<WatchStream>,
     strmFreeStreams: List<WatchStream>
   ): WatchStream? {
     if (event == null) return null
-    val ordered = listOf(preferredSource) + listOf("ppv", "thetvapp", "strmfree").filter { it != preferredSource }
+    val ordered = listOf(preferredSource) + listOf("ppv", "timstreams", "strmfree").filter { it != preferredSource }
     fun getList(src: String): List<WatchStream> = when (src) {
-      "thetvapp" -> tvAppStreams
+      "timstreams" -> timStreams
       "strmfree" -> strmFreeStreams
       else -> ppvStreams
     }

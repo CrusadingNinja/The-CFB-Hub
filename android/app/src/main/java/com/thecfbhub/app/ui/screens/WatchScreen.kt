@@ -86,7 +86,7 @@ fun WatchScreen(
   val ext = CfbTheme.extended
 
   val (activeStreams, activeLoading, activeError) = when (state.watchSource) {
-    "thetvapp" -> Triple(state.tvAppCatalog.streams, state.tvAppLoading, state.tvAppError)
+    "timstreams" -> Triple(state.timStreamsCatalog.streams, state.timStreamsLoading, state.timStreamsError)
     "strmfree" -> Triple(state.strmFreeCatalog.streams, state.strmFreeLoading, state.strmFreeError)
     else -> Triple(state.ppvCatalog.streams, state.ppvLoading, state.ppvError)
   }
@@ -241,7 +241,7 @@ fun WatchScreen(
             SegmentedOptionRow(
               options = listOf(
                 "ppv" to "ppv.st",
-                "thetvapp" to "thetvapp.plus",
+                "timstreams" to "tim-streams.com",
                 "strmfree" to "strmfree.pk"
               ),
               selectedKey = state.watchSource,
@@ -413,8 +413,10 @@ private fun StreamWebViewPlayer(
                 target == embedUrl
               ) {
                 false
-              } else {
+              } else if (req.hasGesture()) {
                 openUrlInCustomTab(context, target)
+                true
+              } else {
                 true
               }
             }

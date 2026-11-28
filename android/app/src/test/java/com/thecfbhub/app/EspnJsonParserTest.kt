@@ -124,7 +124,7 @@ class EspnJsonParserTest {
             "isCfb": true,
             "isLiveNow": true,
             "feeds": [
-              { "id": "f1", "label": "Server 1", "iframe": "/api/thetvapp/embed?eventPath=%2Ftv%2Fespn" }
+              { "id": "f1", "label": "FOX", "iframe": "https://shoewiki.click/bhg7rkug-5070" }
             ]
           }
         ]
@@ -134,16 +134,16 @@ class EspnJsonParserTest {
 
     val catalog = EspnJsonParser.parseServerStreams(
       raw = raw,
-      sourceId = "thetvapp",
-      sourceLabel = "thetvapp.plus",
-      defaultExternalUrl = "https://thetvapp.plus",
+      sourceId = "timstreams",
+      sourceLabel = "tim-streams.com",
+      defaultExternalUrl = "https://tim-streams.com",
       backendBaseUrl = "https://thecfbhub.netlify.app/"
     )
 
     assertEquals(1, catalog.streams.size)
     assertTrue(catalog.streams[0].isCfb)
     assertEquals(
-      "https://thecfbhub.netlify.app/api/thetvapp/embed?eventPath=%2Ftv%2Fespn",
+      "https://shoewiki.click/bhg7rkug-5070",
       catalog.streams[0].iframe
     )
   }

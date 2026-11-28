@@ -95,9 +95,9 @@ data class AppUiState(
   val ppvCatalog: WatchCatalog = WatchCatalog(),
   val ppvLoading: Boolean = false,
   val ppvError: String? = null,
-  val tvAppCatalog: WatchCatalog = WatchCatalog(),
-  val tvAppLoading: Boolean = false,
-  val tvAppError: String? = null,
+  val timStreamsCatalog: WatchCatalog = WatchCatalog(),
+  val timStreamsLoading: Boolean = false,
+  val timStreamsError: String? = null,
   val strmFreeCatalog: WatchCatalog = WatchCatalog(),
   val strmFreeLoading: Boolean = false,
   val strmFreeError: String? = null,
@@ -291,7 +291,7 @@ class CfbViewModel(application: Application) : AndroidViewModel(application) {
       }
       AppTab.WATCH -> {
         val st = _uiState.value
-        if (st.ppvCatalog.streams.isEmpty() && st.tvAppCatalog.streams.isEmpty() && st.strmFreeCatalog.streams.isEmpty()) {
+        if (st.ppvCatalog.streams.isEmpty() && st.timStreamsCatalog.streams.isEmpty() && st.strmFreeCatalog.streams.isEmpty()) {
           viewModelScope.launch { loadWatchStreams(force = false) }
         }
       }
@@ -858,7 +858,7 @@ class CfbViewModel(application: Application) : AndroidViewModel(application) {
     _uiState.update { it.copy(watchSource = source) }
     viewModelScope.launch {
       when (source) {
-        "thetvapp" -> if (_uiState.value.tvAppCatalog.streams.isEmpty()) loadTvAppStreams()
+        "timstreams" -> if (_uiState.value.timStreamsCatalog.streams.isEmpty()) loadTimStreams()
         "strmfree" -> if (_uiState.value.strmFreeCatalog.streams.isEmpty()) loadStrmFreeStreams()
         else -> if (_uiState.value.ppvCatalog.streams.isEmpty()) loadPpvStreams()
       }
@@ -896,7 +896,7 @@ class CfbViewModel(application: Application) : AndroidViewModel(application) {
       event = event,
       preferredSource = cur.watchSource,
       ppvStreams = cur.ppvCatalog.streams,
-      tvAppStreams = cur.tvAppCatalog.streams,
+      timStreams = cur.timStreamsCatalog.streams,
       strmFreeStreams = cur.strmFreeCatalog.streams
     )
     val nextStack = if (recordHistory) pushSnapshot(cur) else cur.backStack
@@ -935,7 +935,7 @@ class CfbViewModel(application: Application) : AndroidViewModel(application) {
     lastWatchFetchMs = System.currentTimeMillis()
     listOf(
       async { loadPpvStreams(force = force, silent = silent) },
-      async { loadTvAppStreams(force = force, silent = silent) },
+      async { loadTimStreams(force = force, silent = silent) },
       async { loadStrmFreeStreams(force = force, silent = silent) }
     ).awaitAll()
   }
@@ -961,23 +961,23 @@ class CfbViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  private suspend fun loadTvAppStreams(force: Boolean = false, silent: Boolean = false) {
-    if (!silent && _uiState.value.tvAppCatalog.streams.isEmpty()) {
-      _uiState.update { it.copy(tvAppLoading = true, tvAppError = null) }
+  private suspend fun loadTimStreams(force: Boolean = false, silent: Boolean = false) {
+    if (!silent && _uiState.value.timStreamsCatalog.streams.isEmpty()) {
+      _uiState.update { it.copy(timStreamsLoading = true, timStreamsError = null) }
     }
     try {
-      val catalog = repository.getTheTvAppStreams(force = force)
+      val catalog = repository.getTimStreams(force = force)
       _uiState.update { s ->
         val autoPick = catalog.streams.firstOrNull { it.isCfb && it.isLiveNow } ?: catalog.streams.firstOrNull { it.isCfb }
         s.copy(
-          tvAppCatalog = catalog,
-          tvAppLoading = false,
-          tvAppError = null,
-          selectedStream = if (s.watchSource == "thetvapp" && s.selectedStream == null) autoPick else s.selectedStream
+          timStreamsCatalog = catalog,
+          timStreamsLoading = false,
+          timStreamsError = null,
+          selectedStream = if (s.watchSource == "timstreams" && s.selectedStream == null) autoPick else s.selectedStream
         )
       }
     } catch (e: Exception) {
-      _uiState.update { it.copy(tvAppLoading = false, tvAppError = e.message ?: "Failed to load thetvapp.plus streams") }
+      _uiState.update { it.copy(timStreamsLoading = false, timStreamsError = e.message ?: "Failed to load tim-streams.com streams") }
     }
   }
 

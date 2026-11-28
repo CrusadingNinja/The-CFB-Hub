@@ -289,12 +289,12 @@ fun ScheduleScreen(
             )
           }
           items(liveGames, key = { "live-${it.id}" }) { ev ->
-            val matched = remember(ev.id, state.watchSource, state.ppvCatalog, state.tvAppCatalog, state.strmFreeCatalog) {
+            val matched = remember(ev.id, state.watchSource, state.ppvCatalog, state.timStreamsCatalog, state.strmFreeCatalog) {
               EspnJsonParser.findStreamForEvent(
                 ev,
                 state.watchSource,
                 state.ppvCatalog.streams,
-                state.tvAppCatalog.streams,
+                state.timStreamsCatalog.streams,
                 state.strmFreeCatalog.streams
               ) != null
             }

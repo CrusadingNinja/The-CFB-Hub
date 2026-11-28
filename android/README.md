@@ -5,7 +5,7 @@ Full Native Kotlin + Jetpack Compose Android application (`com.thecfbhub.app`, `
 ## Native Screens & Features
 - **Schedule**: FBS/FCS division toggle, Regular Season/Postseason phases, horizontal Week Strip, Status/Top-25/Conference filters, pull-to-refresh, chronological ordering, and FLEX/TBD kickoff formatting (`America/New_York` anchored when `timeValid == false`)
 - **Live**: Live scoreboard monitor with pulsing indicators, down-and-distance/Red Zone situations, 15s background-safe auto-refresh, and upcoming slate
-- **Watch**: Native stream directory across `ppv.st`, `thetvapp.plus`, and `strmfree.pk` with multi-feed switching, fullscreen WebView video playback, and Chrome Custom Tabs fallback
+- **Watch**: Native stream directory across `ppv.st`, `tim-streams.com`, and `strmfree.pk` with multi-feed switching, fullscreen WebView video playback, and Chrome Custom Tabs fallback
 - **Standings**: FBS conference tables sortable by seed, win percentage, point differential, and streak
 - **Rankings**: CFP & AP Top 25 polls across seasons and weekly releases with ranking delta badges, conference filters, and others receiving votes
 - **Teams**: Searchable NCAA FBS/FCS directory and native Team Pages (hero banner, record splits, season selector, schedule, and team/opponent season statistics)

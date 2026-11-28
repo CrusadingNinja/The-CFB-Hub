@@ -13,14 +13,14 @@ function getSourceMeta(sourceId) {
 }
 
 function normalizeWatchSource(sourceId) {
-  if (sourceId === 'thetvapp') return 'thetvapp';
+  if (sourceId === 'timstreams') return 'timstreams';
   if (sourceId === 'strmfree') return 'strmfree';
   return 'ppv';
 }
 
 function getStreamsForSource(state, sourceId = null) {
   const target = normalizeWatchSource(sourceId || state.watchSource);
-  if (target === 'thetvapp') return state.tvAppStreams || [];
+  if (target === 'timstreams') return state.timStreams || [];
   if (target === 'strmfree') return state.strmFreeStreams || [];
   return state.ppvStreams || [];
 }
@@ -28,7 +28,7 @@ function getStreamsForSource(state, sourceId = null) {
 function getAllWatchStreams(state) {
   return [
     ...(state.ppvStreams || []),
-    ...(state.tvAppStreams || []),
+    ...(state.timStreams || []),
     ...(state.strmFreeStreams || [])
   ];
 }
@@ -50,12 +50,12 @@ function getStreamCompositeKey(streamOrSlot) {
 
 function getCatalogLoadingState(state) {
   const source = normalizeWatchSource(state.watchSource);
-  if (source === 'thetvapp') {
+  if (source === 'timstreams') {
     return {
       source,
-      loading: Boolean(state.tvAppLoading),
-      error: state.tvAppError,
-      streams: state.tvAppStreams || []
+      loading: Boolean(state.timStreamsLoading),
+      error: state.timStreamsError,
+      streams: state.timStreams || []
     };
   }
   if (source === 'strmfree') {
@@ -1528,7 +1528,7 @@ function buildCatalogGridMarkup(state, allEvents, callbacks) {
                   <span class="broadcast-tag watch-card-source-tag">${escapeHtml(stream.sourceLabel)}</span>
                   <span class="broadcast-tag">${escapeHtml(stream.sourceTag)}</span>
                   <span class="broadcast-tag">${escapeHtml(stream.tag || stream.category)}</span>
-                  ${stream.feeds.length > 1 ? `<span class="broadcast-tag">${stream.feeds.length} ${stream.source === 'thetvapp' ? 'servers' : 'feeds'}${hasSkycast ? ' · SkyCast' : ''}</span>` : ''}
+                  ${stream.feeds.length > 1 ? `<span class="broadcast-tag">${stream.feeds.length} feeds${hasSkycast ? ' · SkyCast' : ''}</span>` : ''}
                   ${altMatches
                     .map(
                       (alt) => `

@@ -112,9 +112,9 @@ fun CfbHubApp(viewModel: CfbViewModel) {
 
   TheCfbHubTheme(darkTheme = state.isDarkTheme) {
     val liveCount = remember(state.liveEvents) { state.liveEvents.count { it.state == "in" } }
-    val watchLiveCount = remember(state.watchSource, state.ppvCatalog, state.tvAppCatalog, state.strmFreeCatalog) {
+    val watchLiveCount = remember(state.watchSource, state.ppvCatalog, state.timStreamsCatalog, state.strmFreeCatalog) {
       val list = when (state.watchSource) {
-        "thetvapp" -> state.tvAppCatalog.streams
+        "timstreams" -> state.timStreamsCatalog.streams
         "strmfree" -> state.strmFreeCatalog.streams
         else -> state.ppvCatalog.streams
       }
@@ -441,7 +441,7 @@ private fun buildTopSubtitle(state: AppUiState): String {
     AppTab.LIVE -> "${if (state.liveDivision == "81") "FCS" else "FBS"} Live & Play-by-Play"
     AppTab.WATCH -> {
       val label = when (state.watchSource) {
-        "thetvapp" -> "thetvapp.plus"
+        "timstreams" -> "tim-streams.com"
         "strmfree" -> "strmfree.pk"
         else -> "ppv.st"
       }

@@ -7,7 +7,7 @@ import {
   getTeamPageData,
   getSeasonResultsGraph,
   getPpvStreams,
-  getTheTvAppStreams,
+  getTimStreams,
   getStrmFreeStreams,
   findStreamForEspnEvent
 } from './api.js';
@@ -255,8 +255,8 @@ function updateChrome(state) {
 
   // Watch live CFB count badges
   const activeWatchStreams =
-    state.watchSource === 'thetvapp'
-      ? state.tvAppStreams || []
+    state.watchSource === 'timstreams'
+      ? state.timStreams || []
       : state.watchSource === 'strmfree'
         ? state.strmFreeStreams || []
         : state.ppvStreams || [];
@@ -304,7 +304,7 @@ function updateChrome(state) {
       const visibleSlots = (state.watchSlots || []).slice(0, state.watchCount).filter(Boolean);
       const playingNow = visibleSlots.length;
       const sourceLabelForId = (srcId) =>
-        srcId === 'thetvapp' ? 'thetvapp.plus' : srcId === 'strmfree' ? 'strmfree.pk' : 'ppv.st';
+        srcId === 'timstreams' ? 'tim-streams.com' : srcId === 'strmfree' ? 'strmfree.pk' : 'ppv.st';
       const slotSourceLabels = Array.from(
         new Set(visibleSlots.map((s) => sourceLabelForId(s.source)))
       );
@@ -655,8 +655,8 @@ function findStreamByHints(state, streamId, streamSource) {
   const idStr = String(streamId);
   if (streamSource) {
     const srcList =
-      streamSource === 'thetvapp'
-        ? state.tvAppStreams || []
+      streamSource === 'timstreams'
+        ? state.timStreams || []
         : streamSource === 'strmfree'
           ? state.strmFreeStreams || []
           : state.ppvStreams || [];
@@ -665,7 +665,7 @@ function findStreamByHints(state, streamId, streamSource) {
   }
   const all = [
     ...(state.ppvStreams || []),
-    ...(state.tvAppStreams || []),
+    ...(state.timStreams || []),
     ...(state.strmFreeStreams || [])
   ];
   return all.find((s) => String(s.id) === idStr) || null;
@@ -685,7 +685,7 @@ async function openWatchForEvent({ eventId, streamId = null, streamSource = null
 
   const hasAnyStreams =
     (curBefore.ppvStreams?.length || 0) > 0 ||
-    (curBefore.tvAppStreams?.length || 0) > 0 ||
+    (curBefore.timStreams?.length || 0) > 0 ||
     (curBefore.strmFreeStreams?.length || 0) > 0;
 
   if (!hasAnyStreams) {
@@ -845,8 +845,8 @@ const watchCallbacks = {
     loadWatchStreams({ force: true });
   },
   onRetryWatchStreams(sourceId = null) {
-    if (sourceId === 'thetvapp') {
-      loadTheTvAppStreams({ force: true });
+    if (sourceId === 'timstreams') {
+      loadTimStreams({ force: true });
     } else if (sourceId === 'strmfree') {
       loadStrmFreeStreams({ force: true });
     } else if (sourceId === 'ppv') {
@@ -887,8 +887,8 @@ function buildInitialWatchSlotPatch(streams, cur, expectedSource) {
     source: defaultStream.source || expectedSource,
     sourceLabel:
       defaultStream.sourceLabel ||
-      (expectedSource === 'thetvapp'
-        ? 'thetvapp.plus'
+      (expectedSource === 'timstreams'
+        ? 'tim-streams.com'
         : expectedSource === 'strmfree'
           ? 'strmfree.pk'
           : 'ppv.st'),
@@ -937,32 +937,32 @@ async function loadPpvStreams({ force = false, silent = false } = {}) {
   }
 }
 
-async function loadTheTvAppStreams({ force = false, silent = false } = {}) {
+async function loadTimStreams({ force = false, silent = false } = {}) {
   const prev = getState();
-  if (!silent && prev.tvAppStreams.length === 0) {
-    setState({ tvAppLoading: true, tvAppError: null });
+  if (!silent && prev.timStreams.length === 0) {
+    setState({ timStreamsLoading: true, timStreamsError: null });
   }
   try {
-    const data = await getTheTvAppStreams({ force });
+    const data = await getTimStreams({ force });
     lastPpvFetchAt = Date.now();
     const cur = getState();
     const patch = {
-      tvAppStreams: data.streams,
-      tvAppCategories: data.categories,
-      tvAppTimestamp: data.timestamp,
-      tvAppLoading: false,
-      tvAppError: null,
-      ...buildInitialWatchSlotPatch(data.streams, cur, 'thetvapp')
+      timStreams: data.streams,
+      timStreamsCategories: data.categories,
+      timStreamsTimestamp: data.timestamp,
+      timStreamsLoading: false,
+      timStreamsError: null,
+      ...buildInitialWatchSlotPatch(data.streams, cur, 'timstreams')
     };
 
     setState(patch);
   } catch (err) {
     setState({
-      tvAppLoading: false,
-      tvAppError: err.message || 'Failed to load thetvapp.plus live streams'
+      timStreamsLoading: false,
+      timStreamsError: err.message || 'Failed to load tim-streams.com live streams'
     });
-    if (!silent && getState().watchSource === 'thetvapp') {
-      showSnackbar(`thetvapp.plus stream error: ${err.message}`);
+    if (!silent && getState().watchSource === 'timstreams') {
+      showSnackbar(`tim-streams.com stream error: ${err.message}`);
     }
   }
 }
@@ -1000,7 +1000,7 @@ async function loadStrmFreeStreams({ force = false, silent = false } = {}) {
 async function loadWatchStreams({ force = false, silent = false } = {}) {
   await Promise.allSettled([
     loadPpvStreams({ force, silent }),
-    loadTheTvAppStreams({ force, silent }),
+    loadTimStreams({ force, silent }),
     loadStrmFreeStreams({ force, silent })
   ]);
   if (getState().route === 'live' && appViewEl.querySelector('#live-detail-pane')) {

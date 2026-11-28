@@ -277,18 +277,18 @@ class CfbRepository(
     return EspnJsonParser.parsePpvStreams(raw)
   }
 
-  suspend fun getTheTvAppStreams(force: Boolean = false): WatchCatalog {
+  suspend fun getTimStreams(force: Boolean = false): WatchCatalog {
     val base = backendBaseUrl.trimEnd('/')
     val raw = fetchJsonObject(
-      "$base/api/thetvapp/streams${if (force) "?force=1" else ""}",
+      "$base/api/timstreams/streams${if (force) "?force=1" else ""}",
       ttlMs = 15_000L,
       force = force
     )
     return EspnJsonParser.parseServerStreams(
       raw = raw,
-      sourceId = "thetvapp",
-      sourceLabel = "thetvapp.plus",
-      defaultExternalUrl = "https://thetvapp.plus",
+      sourceId = "timstreams",
+      sourceLabel = "tim-streams.com",
+      defaultExternalUrl = "https://tim-streams.com",
       backendBaseUrl = base
     )
   }

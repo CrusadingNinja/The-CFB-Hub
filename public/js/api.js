@@ -1463,16 +1463,16 @@ export async function getTeamPageData(teamId, { season = null, force = false } =
   };
 }
 
-// ==================== LIVE STREAMS (PPV.ST & THETVAPP.PLUS) & ESPN MATCHING ====================
+// ==================== LIVE STREAMS (PPV.ST, TIM-STREAMS.COM & STRMFREE.PK) & ESPN MATCHING ====================
 
 export const STREAM_SOURCES = [
   { id: 'ppv', label: 'ppv.st', url: 'https://ppv.st' },
-  { id: 'thetvapp', label: 'thetvapp.plus', url: 'https://thetvapp.plus' },
+  { id: 'timstreams', label: 'tim-streams.com', url: 'https://tim-streams.com' },
   { id: 'strmfree', label: 'strmfree.pk', url: 'https://strmfree.pk' }
 ];
 
 const ppvCache = { data: null, expiresAt: 0 };
-const tvAppCache = { data: null, expiresAt: 0 };
+const timStreamsCache = { data: null, expiresAt: 0 };
 const strmFreeCache = { data: null, expiresAt: 0 };
 
 const TEAM_MATCH_ALIASES = {
@@ -1597,7 +1597,16 @@ function splitStreamMatchupParts(streamName) {
 }
 
 export function matchStreamToEspnEvent(stream, events) {
-  if (!stream || !stream.name || !Array.isArray(events) || events.length === 0) {
+  if (!stream || !Array.isArray(events) || events.length === 0) {
+    return null;
+  }
+
+  if (stream.espnEventId) {
+    const exactIdMatch = events.find((ev) => String(ev?.id || '') === String(stream.espnEventId));
+    if (exactIdMatch) return exactIdMatch;
+  }
+
+  if (!stream.name) {
     return null;
   }
 
@@ -1631,6 +1640,19 @@ function findBestStreamInListForEvent(event, streams) {
   if (!event || !event.away || !event.home || !Array.isArray(streams) || streams.length === 0) {
     return null;
   }
+
+  if (event.id) {
+    const directIdStream = streams.find(
+      (s) =>
+        s &&
+        s.espnEventId &&
+        String(s.espnEventId) === String(event.id) &&
+        Array.isArray(s.feeds) &&
+        s.feeds.length > 0
+    );
+    if (directIdStream) return directIdStream;
+  }
+
   let bestStream = null;
   let bestScore = 0;
 
@@ -1673,7 +1695,7 @@ export function findStreamForEspnEvent(event, state) {
     ...STREAM_SOURCES.map((s) => s.id).filter((id) => id !== preferred)
   ];
   const getList = (srcId) => {
-    if (srcId === 'thetvapp') return state.tvAppStreams || [];
+    if (srcId === 'timstreams') return state.timStreams || [];
     if (srcId === 'strmfree') return state.strmFreeStreams || [];
     return state.ppvStreams || [];
   };
@@ -1878,12 +1900,12 @@ export async function getPpvStreams({ force = false } = {}) {
   return payload;
 }
 
-export async function getTheTvAppStreams({ force = false } = {}) {
-  if (!force && tvAppCache.data && tvAppCache.expiresAt > Date.now()) {
-    return tvAppCache.data;
+export async function getTimStreams({ force = false } = {}) {
+  if (!force && timStreamsCache.data && timStreamsCache.expiresAt > Date.now()) {
+    return timStreamsCache.data;
   }
 
-  const res = await fetch(`/api/thetvapp/streams${force ? '?force=1' : ''}`);
+  const res = await fetch(`/api/timstreams/streams${force ? '?force=1' : ''}`);
   if (!res.ok) {
     throw new Error(`HTTP ${res.status}`);
   }
@@ -1898,27 +1920,28 @@ export async function getTheTvAppStreams({ force = false } = {}) {
         .filter((f) => Boolean(f?.iframe))
         .map((f) => ({
           id: String(f.id),
-          label: String(f.label || 'Server 1'),
+          label: String(f.label || 'Stream 1'),
           iframe: String(f.iframe),
           uriName: String(f.uriName || s.uriName || ''),
-          source: 'thetvapp'
+          source: 'timstreams'
         }));
 
       if (feeds.length === 0) return null;
 
-      const externalUrl = String(s.externalUrl || 'https://thetvapp.plus');
+      const externalUrl = String(s.externalUrl || 'https://tim-streams.com');
       return {
         id: String(s.id),
-        source: 'thetvapp',
-        sourceLabel: 'thetvapp.plus',
+        source: 'timstreams',
+        sourceLabel: 'tim-streams.com',
         name: String(s.name || 'Live Stream'),
         tag: String(s.tag || 'College Football'),
         category: String(s.category || 'College Football'),
-        sourceTag: String(s.sourceTag || 'thetvapp.plus'),
+        sourceTag: String(s.sourceTag || 'tim-streams.com'),
         broadcast: String(s.broadcast || ''),
         poster: String(s.poster || ''),
-        colors: ['#006c47', '#265b6e'],
+        colors: ['#006c47', '#1d4ed8'],
         uriName: String(s.uriName || ''),
+        espnEventId: String(s.espnEventId || ''),
         ppvUrl: externalUrl,
         externalUrl,
         startsAt: Number(s.startsAt || 0),
@@ -1928,8 +1951,8 @@ export async function getTheTvAppStreams({ force = false } = {}) {
         isLiveNow: Boolean(s.isLiveNow),
         isCfb: Boolean(s.isCfb),
         isFootball: Boolean(s.isFootball),
-        viewers: 0,
-        viewersDisplay: '',
+        viewers: Number(s.viewers || 0),
+        viewersDisplay: String(s.viewersDisplay || ''),
         iframe: feeds[0].iframe,
         feeds
       };
@@ -1943,8 +1966,8 @@ export async function getTheTvAppStreams({ force = false } = {}) {
   });
 
   const payload = { timestamp: nowTs, categories, streams };
-  tvAppCache.data = payload;
-  tvAppCache.expiresAt = Date.now() + 15000;
+  timStreamsCache.data = payload;
+  timStreamsCache.expiresAt = Date.now() + 15000;
   return payload;
 }
 

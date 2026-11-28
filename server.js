@@ -17,13 +17,10 @@ const PPV_STREAMS_URL = 'https://api.ppv.st/api/streams';
 const PPV_CACHE_KEY = 'ppv:streams';
 const PPV_CACHE_TTL_MS = 15000;
 
-const THETVAPP_ORIGIN = 'https://thetvapp.plus';
-const THETVAPP_CFB_URL = 'https://thetvapp.plus/watch/cfb-streams';
-const THETVAPP_ALL_URL = 'https://thetvapp.plus/v15';
-const THETVAPP_CACHE_KEY = 'thetvapp:streams';
-const THETVAPP_CACHE_TTL_MS = 30000;
-const THETVAPP_EVENT_CACHE_TTL_MS = 5 * 60 * 1000;
-const tvAppEventCache = new Map();
+const TIMSTREAMS_ORIGIN = 'https://tim-streams.com';
+const TIMSTREAMS_API_URL = 'https://tim-streams.com/api/live-upcoming';
+const TIMSTREAMS_CACHE_KEY = 'timstreams:streams';
+const TIMSTREAMS_CACHE_TTL_MS = 30 * 1000;
 
 const STRMFREE_ORIGIN = 'https://strmfree.pk';
 const STRMFREE_API_STREAMS_URL = 'https://strmfree.pk/api/v1/streams';
@@ -627,7 +624,7 @@ function handlePpvProxy(reqUrl, res) {
   });
 }
 
-// ==================== THETVAPP.PLUS DIRECTORY & EMBED PROXY ====================
+// ==================== HTTP TEXT & HTML HELPERS ====================
 
 function decompressBuffer(buf, encoding) {
   return new Promise(function (resolve, reject) {
@@ -771,307 +768,206 @@ function extractAttr(attrsStr, attrName) {
   return decodeHtmlEntities(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3] || '');
 }
 
-function parseTheTvAppStartTimestamp(timeStr, dateStr) {
-  const cleanTime = String(timeStr || '').replace(/\b(ET|EST|EDT)\b/gi, '').trim();
-  const cleanDate = String(dateStr || '').trim();
-  if (!cleanTime || !cleanDate) return 0;
+// ==================== TIM-STREAMS.COM DIRECTORY PROXY ====================
 
-  const year = new Date().getFullYear();
-  const candidate = new Date(cleanDate + ', ' + year + ' ' + cleanTime);
-  if (!Number.isNaN(candidate.getTime())) {
-    return Math.floor(candidate.getTime() / 1000);
+function getEasternDstBoundsUtcMs(year) {
+  const marFirstDow = new Date(Date.UTC(year, 2, 1)).getUTCDay();
+  const marSecondSunday = 1 + ((7 - marFirstDow) % 7) + 7;
+  const dstStartUtcMs = Date.UTC(year, 2, marSecondSunday, 7, 0, 0);
+
+  const novFirstDow = new Date(Date.UTC(year, 10, 1)).getUTCDay();
+  const novFirstSunday = 1 + ((7 - novFirstDow) % 7);
+  const dstEndUtcMs = Date.UTC(year, 10, novFirstSunday, 6, 0, 0);
+
+  return { dstStartUtcMs: dstStartUtcMs, dstEndUtcMs: dstEndUtcMs };
+}
+
+function parseEasternLocalTimestamp(timeStr) {
+  const m = String(timeStr || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return 0;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const hour = Number(m[4]);
+  const minute = Number(m[5]);
+  const second = Number(m[6] || 0);
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute)
+  ) {
+    return 0;
   }
-  return 0;
+
+  const naiveUtcMs = Date.UTC(year, month - 1, day, hour, minute, second);
+  const bounds = getEasternDstBoundsUtcMs(year);
+  const edtCandidateMs = naiveUtcMs + 4 * 3600 * 1000;
+  const isEdt = edtCandidateMs >= bounds.dstStartUtcMs && edtCandidateMs < bounds.dstEndUtcMs;
+  const offsetHours = isEdt ? 4 : 5;
+  return Math.floor((naiveUtcMs + offsetHours * 3600 * 1000) / 1000);
 }
 
-function normalizeTheTvAppLeague(rawLeague, eventPath) {
-  const stripped = stripHtmlTags(rawLeague)
-    .replace(/^[^a-zA-Z0-9]+/, '')
-    .trim();
-  if (stripped) return stripped;
-  const seg = String(eventPath || '').split('/').filter(Boolean)[1] || '';
-  return seg ? seg.toUpperCase() : 'Sports';
+function normalizeTimStreamsLogoUrl(rawLogo) {
+  const trimmed = String(rawLogo || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.indexOf('//') === 0) {
+    return 'https:' + trimmed;
+  }
+  if (trimmed.charAt(0) === '/') {
+    return TIMSTREAMS_ORIGIN + trimmed;
+  }
+  return trimmed;
 }
 
-function parseTheTvAppGamesHtml(html, defaultIsCfb) {
-  const items = [];
-  const seenPaths = new Set();
-  const anchorRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
-  let match;
+function normalizeTimStreamsList(rawJson, nowSec) {
+  const data = rawJson && typeof rawJson === 'object' ? rawJson : {};
+  const rawEvents = Array.isArray(data.events) ? data.events : [];
+  const rawGenres = Array.isArray(data.genres) ? data.genres : [];
+  const curNowSec = Number.isFinite(Number(nowSec)) ? Number(nowSec) : Math.floor(Date.now() / 1000);
 
-  while ((match = anchorRe.exec(String(html || ''))) !== null) {
-    const attrs = match[1] || '';
-    const inner = match[2] || '';
-    const classAttr = extractAttr(attrs, 'class');
-    if (!/\bgame\b/i.test(classAttr)) {
-      continue;
-    }
+  const genreNameById = new Map();
+  const subGenreNameByKey = new Map();
+  rawGenres.forEach(function (g) {
+    if (!g || g.id === undefined || g.id === null) return;
+    const gid = String(g.id);
+    genreNameById.set(gid, String(g.name || 'Sports'));
+    const subs = Array.isArray(g.sub_categories) ? g.sub_categories : [];
+    subs.forEach(function (sub) {
+      if (!sub || sub.id === undefined || sub.id === null) return;
+      subGenreNameByKey.set(gid + ':' + String(sub.id), String(sub.name || ''));
+    });
+  });
 
-    const rawHref = extractAttr(attrs, 'href');
-    if (!rawHref) continue;
+  const seenSlugs = new Set();
+  const streams = [];
 
-    let parsedUrl;
-    try {
-      parsedUrl = new url.URL(rawHref, THETVAPP_ORIGIN);
-    } catch (err) {
-      continue;
-    }
-    const eventPath = parsedUrl.pathname || '';
-    if (eventPath.indexOf('/tv-live/') === -1 || seenPaths.has(eventPath)) {
-      continue;
-    }
-    seenPaths.add(eventPath);
+  rawEvents.forEach(function (item) {
+    if (!item || typeof item !== 'object') return;
+    const slug = String(item.url || '').trim();
+    if (!slug || seenSlugs.has(slug)) return;
+    seenSlugs.add(slug);
 
-    const pathParts = eventPath.split('/').filter(Boolean);
-    const rawEventId = pathParts[pathParts.length - 1] || eventPath;
-    const streamId = 'thetvapp-' + rawEventId;
+    const rawStreams = Array.isArray(item.streams) ? item.streams : [];
+    const usableStreams = rawStreams.filter(function (s) {
+      const u = s && typeof s.url === 'string' ? s.url.trim() : '';
+      return /^https?:\/\//i.test(u);
+    });
+    if (usableStreams.length === 0) return;
 
-    const leagueMatch = inner.match(/<span[^>]*class="[^"]*\bleague-tag\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
-    const matchupMatch = inner.match(/<span[^>]*class="[^"]*\bmatchup\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
-    const liveMatch = inner.match(/<span[^>]*class="[^"]*\blive\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
-    const badgeTimeMatch = inner.match(/<span[^>]*class="[^"]*\b(?:badge-time|time)\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
-    const dateSmallMatch = inner.match(/<small[^>]*>([\s\S]*?)<\/small>/i);
+    const freeStreams = usableStreams.filter(function (s) {
+      return !s.vip;
+    });
+    const chosenStreams = freeStreams.length > 0 ? freeStreams : usableStreams;
 
-    const league = normalizeTheTvAppLeague(leagueMatch ? leagueMatch[1] : '', eventPath);
-    const name = stripHtmlTags(matchupMatch ? matchupMatch[1] : inner) || 'Live Stream';
-    const isLiveNow = Boolean(liveMatch) || /●\s*LIVE/i.test(inner);
-    const timeText = stripHtmlTags(badgeTimeMatch ? badgeTimeMatch[1] : '');
-    const dateText = stripHtmlTags(dateSmallMatch ? dateSmallMatch[1] : '');
-    const timeLabel = [timeText, dateText].filter(Boolean).join(' · ');
-    const startsAt = isLiveNow ? Math.floor(Date.now() / 1000) - 60 : parseTheTvAppStartTimestamp(timeText, dateText);
+    const feeds = [];
+    const seenFeedUrls = new Set();
+    chosenStreams.forEach(function (s, idx) {
+      const feedUrl = String(s.url || '').trim();
+      if (!feedUrl || seenFeedUrls.has(feedUrl)) return;
+      seenFeedUrls.add(feedUrl);
+      const rawLabel = String(s.name || '').trim() || 'Stream ' + (feeds.length + 1);
+      feeds.push({
+        id: 'timstreams-' + slug + '-' + (idx + 1),
+        label: rawLabel,
+        iframe: feedUrl,
+        uriName: slug,
+        source: 'timstreams'
+      });
+    });
+    if (feeds.length === 0) return;
 
+    const gid = item.genre !== undefined && item.genre !== null ? String(item.genre) : '';
+    const sgid = item.sub_genre !== undefined && item.sub_genre !== null ? String(item.sub_genre) : '';
+    const genreName = genreNameById.get(gid) || 'Sports';
+    const subGenreName = sgid ? subGenreNameByKey.get(gid + ':' + sgid) || '' : '';
+
+    const isFootball = gid === '8' || /football|ncaaf|nfl/i.test(genreName + ' ' + subGenreName);
     const isCfb =
-      Boolean(defaultIsCfb) ||
-      /\b(cfb|ncaaf|college football)\b/i.test(league) ||
-      eventPath.indexOf('/tv-live/cfb/') === 0;
-    const isFootball =
-      isCfb ||
-      /\b(nfl|football|cfl|ufl|xfl)\b/i.test(league) ||
-      eventPath.indexOf('/tv-live/nfl/') === 0;
+      (gid === '8' && sgid === '2') ||
+      /ncaa\s*football|college\s*football|\bncaaf\b|\bcfb\b/i.test(subGenreName);
 
-    const uriName = eventPath.replace(/^\/tv-live\//, '');
-    const externalUrl = parsedUrl.toString();
-    const fallbackEmbedPath = '/api/thetvapp/embed?eventPath=' + encodeURIComponent(eventPath);
+    const category = isCfb ? 'College Football' : isFootball ? 'American Football' : subGenreName || genreName || 'Sports';
+    const tag = isCfb
+      ? 'NCAAF'
+      : gid === '8' && sgid === '1'
+        ? 'NFL'
+        : subGenreName || genreName || 'Sports';
 
-    items.push({
-      id: streamId,
-      rawEventId: rawEventId,
-      eventPath: eventPath,
-      name: name,
-      league: league,
-      tag: isCfb ? 'College Football' : league,
-      category: isCfb ? 'College Football' : isFootball ? 'American Football' : league,
-      sourceTag: 'thetvapp.plus',
-      broadcast: '',
-      timeLabel: timeLabel,
-      uriName: uriName,
-      externalUrl: externalUrl,
+    const espnMatch = slug.match(/-(\d{8,10})$/);
+    const espnEventId = espnMatch ? espnMatch[1] : '';
+
+    const startsAt = parseEasternLocalTimestamp(item.time);
+    const endsAt = startsAt > 0 ? startsAt + 4 * 3600 : 0;
+    const isLiveNow = Boolean(startsAt > 0 && startsAt <= curNowSec + 900 && endsAt > curNowSec);
+    const viewers = Number(item.viewers || 0) || 0;
+    const primaryLabel = feeds[0].label || '';
+    const broadcast = feeds
+      .map(function (f) { return f.label; })
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(' / ');
+
+    streams.push({
+      id: 'timstreams-' + slug,
+      source: 'timstreams',
+      sourceLabel: 'tim-streams.com',
+      name: String(item.name || 'Live Stream').trim(),
+      tag: tag,
+      category: category,
+      sourceTag: primaryLabel ? 'HD | ' + primaryLabel : tag,
+      broadcast: broadcast,
+      poster: normalizeTimStreamsLogoUrl(item.logo),
+      uriName: slug,
+      espnEventId: espnEventId,
+      externalUrl: TIMSTREAMS_ORIGIN + '/watch/' + encodeURIComponent(slug),
       startsAt: startsAt,
-      endsAt: 0,
+      endsAt: endsAt,
+      timeLabel: '',
       alwaysLive: false,
       isLiveNow: isLiveNow,
       isCfb: isCfb,
       isFootball: isFootball,
-      viewers: 0,
-      viewersDisplay: '',
-      iframe: fallbackEmbedPath,
-      feeds: [
-        {
-          id: streamId + '-auto',
-          label: 'Server 1',
-          iframe: fallbackEmbedPath,
-          uriName: uriName
-        }
-      ]
-    });
-  }
-
-  return items;
-}
-
-function buildTheTvAppEmbedProxyUrl(embedUrl, streamNum, eventPath) {
-  const parts = [];
-  if (streamNum) {
-    parts.push('streamId=' + encodeURIComponent(String(streamNum)));
-  }
-  if (embedUrl) {
-    parts.push('embedUrl=' + encodeURIComponent(String(embedUrl)));
-  }
-  if (eventPath) {
-    parts.push('eventPath=' + encodeURIComponent(String(eventPath)));
-  }
-  return '/api/thetvapp/embed?' + parts.join('&');
-}
-
-function resolveTheTvAppEventFeeds(eventUrl, eventPath, streamId) {
-  const cached = tvAppEventCache.get(eventPath);
-  if (cached && cached.expiresAt > Date.now()) {
-    return Promise.resolve(cached.data);
-  }
-
-  return fetchHttpText(
-    eventUrl,
-    {
-      'Referer': THETVAPP_ORIGIN + '/',
-      'Origin': THETVAPP_ORIGIN
-    },
-    10000
-  ).then(function (resp) {
-    const html = resp.body || '';
-
-    let cxSrc = '';
-    const iframeMatch = html.match(/<iframe\b([^>]*)>/gi) || [];
-    for (let i = 0; i < iframeMatch.length; i++) {
-      const attrs = iframeMatch[i];
-      const idVal = extractAttr(attrs, 'id');
-      const srcVal = extractAttr(attrs, 'src');
-      if (idVal === 'cx-iframe' || (srcVal && srcVal.indexOf('new-stream-embed') !== -1)) {
-        cxSrc = srcVal;
-        break;
-      }
-    }
-    if (cxSrc && cxSrc.indexOf('//') === 0) {
-      cxSrc = 'https:' + cxSrc;
-    }
-
-    const servers = [];
-    const seenServerIds = new Set();
-    const btnRe = /id=["']stream-btn-(\d+)["']([^>]*)>([\s\S]*?)<\/(?:div|button|a|span)>/gi;
-    let btnMatch;
-    while ((btnMatch = btnRe.exec(html)) !== null) {
-      const serverNum = btnMatch[1];
-      if (!serverNum || seenServerIds.has(serverNum)) continue;
-      seenServerIds.add(serverNum);
-      const attrs = btnMatch[2] || '';
-      const label = stripHtmlTags(btnMatch[3]) || 'Server ' + (servers.length + 1);
-      const isSelected = /\bselected-link\b|\bactive\b/i.test(attrs);
-      servers.push({
-        serverNum: serverNum,
-        label: label,
-        selected: isSelected
-      });
-    }
-
-    const info = {};
-    const asideMatch = html.match(/<aside\b[^>]*class="[^"]*\bmatch-info\b[^"]*"[^>]*>([\s\S]*?)<\/aside>/i);
-    if (asideMatch) {
-      const dtDdRe = /<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi;
-      let pair;
-      while ((pair = dtDdRe.exec(asideMatch[1])) !== null) {
-        const key = stripHtmlTags(pair[1]).replace(/:$/, '').trim();
-        const val = stripHtmlTags(pair[2]);
-        if (key && val) {
-          info[key] = val;
-        }
-      }
-    }
-
-    const broadcast = info['Broadcast Channels'] || info['Broadcast Channel'] || '';
-    const feeds = [];
-
-    if (cxSrc && servers.length > 0 && /\/new-stream-embed\/\d+/i.test(cxSrc)) {
-      servers.forEach(function (srv) {
-        const serverEmbedUrl = cxSrc.replace(/\/new-stream-embed\/\d+/i, '/new-stream-embed/' + srv.serverNum);
-        const feedLabel = broadcast ? srv.label + ' · ' + broadcast : srv.label;
-        feeds.push({
-          id: streamId + '-srv-' + srv.serverNum,
-          label: feedLabel,
-          serverNum: srv.serverNum,
-          selected: srv.selected,
-          embedUrl: serverEmbedUrl,
-          iframe: buildTheTvAppEmbedProxyUrl(serverEmbedUrl, srv.serverNum, eventPath),
-          uriName: eventPath.replace(/^\/tv-live\//, '')
-        });
-      });
-      // Ensure the default/selected server comes first
-      feeds.sort(function (a, b) {
-        if (a.selected !== b.selected) return a.selected ? -1 : 1;
-        return 0;
-      });
-    } else if (cxSrc) {
-      const idMatch = cxSrc.match(/\/new-stream-embed\/(\d+)/i);
-      const num = idMatch ? idMatch[1] : '';
-      feeds.push({
-        id: streamId + '-main',
-        label: broadcast ? 'Server 1 · ' + broadcast : 'Server 1',
-        serverNum: num,
-        embedUrl: cxSrc,
-        iframe: buildTheTvAppEmbedProxyUrl(cxSrc, num, eventPath),
-        uriName: eventPath.replace(/^\/tv-live\//, '')
-      });
-    } else {
-      feeds.push({
-        id: streamId + '-pending',
-        label: broadcast ? 'Pending · ' + broadcast : 'Pre-game',
-        serverNum: '',
-        embedUrl: '',
-        iframe: buildTheTvAppEmbedProxyUrl('', '', eventPath),
-        uriName: eventPath.replace(/^\/tv-live\//, '')
-      });
-    }
-
-    const resolved = {
-      broadcast: broadcast,
-      stadium: info['Stadium'] || '',
-      dateText: info['Date'] || '',
-      cxSrc: cxSrc,
+      viewers: viewers,
+      viewersDisplay: viewers > 0 ? String(viewers) : '',
+      iframe: feeds[0].iframe,
       feeds: feeds
-    };
-
-    if (tvAppEventCache.size > 250) {
-      tvAppEventCache.clear();
-    }
-    tvAppEventCache.set(eventPath, {
-      expiresAt: Date.now() + THETVAPP_EVENT_CACHE_TTL_MS,
-      data: resolved
     });
-
-    return resolved;
   });
+
+  streams.sort(function (a, b) {
+    if (a.isCfb !== b.isCfb) return a.isCfb ? -1 : 1;
+    if (a.isLiveNow !== b.isLiveNow) return a.isLiveNow ? -1 : 1;
+    return (a.startsAt || Number.MAX_SAFE_INTEGER) - (b.startsAt || Number.MAX_SAFE_INTEGER);
+  });
+
+  const catCounts = new Map();
+  streams.forEach(function (s) {
+    const catName = s.category || 'Sports';
+    catCounts.set(catName, (catCounts.get(catName) || 0) + 1);
+  });
+  const categories = Array.from(catCounts.entries()).map(function (entry) {
+    return {
+      id: entry[0],
+      name: entry[0],
+      alwaysLive: false,
+      count: entry[1]
+    };
+  });
+
+  return {
+    timestamp: curNowSec,
+    source: 'timstreams',
+    categories: categories,
+    streams: streams
+  };
 }
 
-function mapWithConcurrency(items, limit, workerFn) {
-  if (!Array.isArray(items) || items.length === 0) {
-    return Promise.resolve([]);
-  }
-  const results = new Array(items.length);
-  let nextIdx = 0;
-
-  function runWorker() {
-    if (nextIdx >= items.length) {
-      return Promise.resolve();
-    }
-    const curIdx = nextIdx++;
-    return Promise.resolve()
-      .then(function () {
-        return workerFn(items[curIdx], curIdx);
-      })
-      .then(
-        function (val) {
-          results[curIdx] = val;
-          return runWorker();
-        },
-        function () {
-          results[curIdx] = null;
-          return runWorker();
-        }
-      );
-  }
-
-  const workers = [];
-  const workerCount = Math.min(limit, items.length);
-  for (let i = 0; i < workerCount; i++) {
-    workers.push(runWorker());
-  }
-  return Promise.all(workers).then(function () {
-    return results;
-  });
-}
-
-function handleTheTvAppStreamsProxy(reqUrl, res) {
+function handleTimStreamsProxy(reqUrl, res) {
   const parsedQuery = reqUrl.query || {};
   const force = parsedQuery.force === '1';
-  const cached = proxyCache.get(THETVAPP_CACHE_KEY);
+  const cached = proxyCache.get(TIMSTREAMS_CACHE_KEY);
   if (!force && cached && cached.expiresAt > Date.now()) {
     res.writeHead(cached.statusCode, {
       'Content-Type': 'application/json; charset=utf-8',
@@ -1083,278 +979,58 @@ function handleTheTvAppStreamsProxy(reqUrl, res) {
     return;
   }
 
-  Promise.allSettled([
-    fetchHttpText(THETVAPP_CFB_URL, { 'Referer': THETVAPP_ORIGIN + '/' }, 12000),
-    fetchHttpText(THETVAPP_ALL_URL, { 'Referer': THETVAPP_ORIGIN + '/' }, 12000)
-  ])
-    .then(function (settled) {
-      const cfbRes = settled[0].status === 'fulfilled' ? settled[0].value : null;
-      const allRes = settled[1].status === 'fulfilled' ? settled[1].value : null;
-
-      if (!cfbRes && !allRes) {
-        const firstErr = (settled[0].reason || settled[1].reason || new Error('Failed to fetch thetvapp.plus')).message;
-        sendJson(res, 502, { error: 'Upstream thetvapp.plus error', details: firstErr });
-        return null;
-      }
-
-      const cfbItems = cfbRes ? parseTheTvAppGamesHtml(cfbRes.body, true) : [];
-      const allItems = allRes ? parseTheTvAppGamesHtml(allRes.body, false) : [];
-
-      const byPath = new Map();
-      cfbItems.forEach(function (item) {
-        byPath.set(item.eventPath, item);
-      });
-      allItems.forEach(function (item) {
-        if (!byPath.has(item.eventPath)) {
-          byPath.set(item.eventPath, item);
-        }
-      });
-
-      const merged = Array.from(byPath.values());
-      const targetsToResolve = merged.filter(function (s) {
-        return s.isCfb || (s.isFootball && s.isLiveNow);
-      }).slice(0, 40);
-
-      return mapWithConcurrency(targetsToResolve, 10, function (item) {
-        return resolveTheTvAppEventFeeds(item.externalUrl, item.eventPath, item.id).then(function (resolved) {
-          if (resolved) {
-            item.broadcast = resolved.broadcast || '';
-            if (resolved.broadcast) {
-              item.sourceTag = 'HD | ' + resolved.broadcast;
-            }
-            if (Array.isArray(resolved.feeds) && resolved.feeds.length > 0) {
-              item.feeds = resolved.feeds;
-              item.iframe = resolved.feeds[0].iframe;
-            }
-          }
-          return item;
-        });
-      }).then(function () {
-        const catCounts = new Map();
-        merged.forEach(function (s) {
-          const catName = s.category || 'Sports';
-          catCounts.set(catName, (catCounts.get(catName) || 0) + 1);
-        });
-        const categories = Array.from(catCounts.entries()).map(function (entry) {
-          return {
-            id: entry[0],
-            name: entry[0],
-            alwaysLive: false,
-            count: entry[1]
-          };
-        });
-
-        const payload = JSON.stringify({
-          timestamp: Math.floor(Date.now() / 1000),
-          source: 'thetvapp',
-          categories: categories,
-          streams: merged
-        });
-
-        pruneCacheIfNeeded();
-        proxyCache.set(THETVAPP_CACHE_KEY, {
-          statusCode: 200,
-          body: payload,
-          expiresAt: Date.now() + THETVAPP_CACHE_TTL_MS
-        });
-
-        res.writeHead(200, {
-          'Content-Type': 'application/json; charset=utf-8',
-          'Access-Control-Allow-Origin': '*',
-          'X-Proxy-Cache': 'MISS',
-          'Cache-Control': 'no-cache'
-        });
-        res.end(payload);
-      });
-    })
-    .catch(function (err) {
-      if (!res.headersSent) {
-        sendJson(res, 502, { error: 'thetvapp.plus stream directory error', details: err.message });
-      }
-    });
-}
-
-function buildTheTvAppBridgeScript(embedOrigin) {
-  return [
-    '(function(){',
-    'var BASE_ORIGIN=' + JSON.stringify(embedOrigin) + ';',
-    'function maybeRewritePlaylistUrl(rawUrl){',
-    '  if(!rawUrl||typeof rawUrl!=="string")return rawUrl;',
-    '  if(rawUrl.indexOf("/api/thetvapp/playlist")!==-1)return rawUrl;',
-    '  try{',
-    '    var resolved=new URL(rawUrl,BASE_ORIGIN);',
-    '    if(resolved.hostname.indexOf("hereisman.net")!==-1||/\\/load-playlist(?:\\?|$|\\b)/i.test(resolved.pathname)){',
-    '      return window.location.origin+"/api/thetvapp/playlist?target="+encodeURIComponent(resolved.toString())+"&origin="+encodeURIComponent(BASE_ORIGIN);',
-    '    }',
-    '  }catch(e){}',
-    '  return rawUrl;',
-    '}',
-    'if(typeof window.fetch==="function"){',
-    '  var origFetch=window.fetch;',
-    '  window.fetch=function(input,init){',
-    '    if(typeof input==="string"){input=maybeRewritePlaylistUrl(input);}',
-    '    return origFetch.call(this,input,init);',
-    '  };',
-    '}',
-    'if(window.XMLHttpRequest&&window.XMLHttpRequest.prototype&&window.XMLHttpRequest.prototype.open){',
-    '  var origOpen=window.XMLHttpRequest.prototype.open;',
-    '  window.XMLHttpRequest.prototype.open=function(method,u){',
-    '    var args=Array.prototype.slice.call(arguments);',
-    '    if(typeof u==="string"){args[1]=maybeRewritePlaylistUrl(u);}',
-    '    return origOpen.apply(this,args);',
-    '  };',
-    '}',
-    '})();'
-  ].join('');
-}
-
-function sendPreGameEmbedHtml(res, eventUrl) {
-  const safeHref = String(eventUrl || THETVAPP_ORIGIN)
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;');
-  const html =
-    '<!DOCTYPE html><html><head><meta charset="utf-8"><style>' +
-    'html,body{margin:0;height:100%;background:#0a0f0d;color:#e6ebe9;font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;text-align:center;}' +
-    '.box{max-width:340px;padding:24px;}h3{margin:0 0 8px;font-size:16px;}p{margin:0 0 14px;font-size:13px;color:#9ba8a3;line-height:1.45;}' +
-    'a{display:inline-block;padding:8px 14px;border-radius:999px;background:#006c47;color:#fff;text-decoration:none;font-size:12px;font-weight:600;}' +
-    '</style></head><body><div class="box"><h3>Stream Not Live Yet</h3>' +
-    '<p>thetvapp.plus has not published an active video embed for this matchup yet. Streams typically activate shortly before kickoff.</p>' +
-    '<a href="' + safeHref + '" target="_blank" rel="noopener noreferrer">Open on thetvapp.plus</a>' +
-    '</div></body></html>';
-  res.writeHead(200, {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Cache-Control': 'no-cache'
-  });
-  res.end(html);
-}
-
-function handleTheTvAppEmbedProxy(reqUrl, res) {
-  const q = reqUrl.query || {};
-  const rawEmbedUrl = typeof q.embedUrl === 'string' ? q.embedUrl.trim() : '';
-  const eventPath = typeof q.eventPath === 'string' ? q.eventPath.trim() : '';
-
-  let resolvePromise;
-  if (rawEmbedUrl) {
-    resolvePromise = Promise.resolve(rawEmbedUrl);
-  } else if (eventPath && eventPath.indexOf('/tv-live/') === 0) {
-    const fullEventUrl = THETVAPP_ORIGIN + eventPath;
-    resolvePromise = resolveTheTvAppEventFeeds(fullEventUrl, eventPath, 'thetvapp-event').then(function (resolved) {
-      return resolved && resolved.cxSrc ? resolved.cxSrc : '';
-    });
-  } else {
-    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Missing embedUrl or eventPath parameter');
-    return;
-  }
-
-  resolvePromise
-    .then(function (targetEmbedUrl) {
-      if (!targetEmbedUrl) {
-        sendPreGameEmbedHtml(res, eventPath ? THETVAPP_ORIGIN + eventPath : THETVAPP_ORIGIN);
-        return null;
-      }
-
-      let parsedEmbed;
-      try {
-        parsedEmbed = new url.URL(targetEmbedUrl);
-      } catch (err) {
-        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Invalid embed URL');
-        return null;
-      }
-
-      if (parsedEmbed.protocol !== 'https:') {
-        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Only https embed URLs are supported');
-        return null;
-      }
-
-      return fetchHttpText(
-        parsedEmbed.toString(),
-        {
-          'Referer': THETVAPP_ORIGIN + '/',
-          'Origin': THETVAPP_ORIGIN
-        },
-        12000
-      ).then(function (embedRes) {
-        const embedOrigin = parsedEmbed.origin;
-        let html = embedRes.body || '';
-        const headInject =
-          '<base href="' + embedOrigin + '/">\n' +
-          '<style>html,body,#player,#playerWrapper{margin:0!important;padding:0!important;width:100%!important;height:100%!important;overflow:hidden!important;background:#000!important;}</style>\n' +
-          '<script>' + buildTheTvAppBridgeScript(embedOrigin) + '</script>';
-
-        if (/<head[^>]*>/i.test(html)) {
-          html = html.replace(/<head[^>]*>/i, function (match) {
-            return match + '\n' + headInject;
-          });
-        } else {
-          html = headInject + '\n' + html;
-        }
-
-        res.writeHead(embedRes.statusCode >= 200 && embedRes.statusCode < 400 ? 200 : embedRes.statusCode, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-cache'
-        });
-        res.end(html);
-      });
-    })
-    .catch(function (err) {
-      if (!res.headersSent) {
-        res.writeHead(err && err.isTimeout ? 504 : 502, { 'Content-Type': 'text/plain; charset=utf-8' });
-        res.end('Upstream thetvapp.plus embed error: ' + err.message);
-      }
-    });
-}
-
-function handleTheTvAppPlaylistProxy(reqUrl, res) {
-  const q = reqUrl.query || {};
-  const target = typeof q.target === 'string' ? q.target.trim() : '';
-  const originParam = typeof q.origin === 'string' ? q.origin.trim() : 'https://gooz.aapmains.net';
-  if (!target) {
-    sendJson(res, 400, { error: 'Missing target parameter' });
-    return;
-  }
-
-  let parsedTarget;
-  let parsedOrigin;
-  try {
-    parsedTarget = new url.URL(target);
-    parsedOrigin = new url.URL(originParam);
-  } catch (err) {
-    sendJson(res, 400, { error: 'Invalid target or origin URL' });
-    return;
-  }
-
-  if (parsedTarget.protocol !== 'https:' || parsedOrigin.protocol !== 'https:') {
-    sendJson(res, 403, { error: 'Only https URLs are permitted' });
-    return;
-  }
-
   fetchHttpText(
-    parsedTarget.toString(),
+    TIMSTREAMS_API_URL,
     {
-      'Accept': '*/*',
-      'Origin': parsedOrigin.origin,
-      'Referer': parsedOrigin.origin + '/'
+      'Accept': 'application/json, text/plain, */*',
+      'Referer': TIMSTREAMS_ORIGIN + '/',
+      'Origin': TIMSTREAMS_ORIGIN
     },
     12000
   )
     .then(function (upstreamRes) {
-      const contentType = (upstreamRes.headers && upstreamRes.headers['content-type']) || 'text/plain; charset=utf-8';
-      res.writeHead(upstreamRes.statusCode || 200, {
-        'Content-Type': contentType,
-        'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'no-store'
+      if (upstreamRes.statusCode < 200 || upstreamRes.statusCode >= 300) {
+        sendJson(res, upstreamRes.statusCode || 502, {
+          error: 'Upstream tim-streams.com HTTP ' + upstreamRes.statusCode
+        });
+        return;
+      }
+
+      let rawJson;
+      try {
+        rawJson = JSON.parse(upstreamRes.body || '{}');
+      } catch (parseErr) {
+        sendJson(res, 502, {
+          error: 'Invalid JSON from tim-streams.com',
+          details: parseErr.message
+        });
+        return;
+      }
+
+      const nowSec = Math.floor(Date.now() / 1000);
+      const normalized = normalizeTimStreamsList(rawJson, nowSec);
+      const payload = JSON.stringify(normalized);
+
+      pruneCacheIfNeeded();
+      proxyCache.set(TIMSTREAMS_CACHE_KEY, {
+        statusCode: 200,
+        body: payload,
+        expiresAt: Date.now() + TIMSTREAMS_CACHE_TTL_MS
       });
-      res.end(upstreamRes.body || '');
+
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Access-Control-Allow-Origin': '*',
+        'X-Proxy-Cache': 'MISS',
+        'Cache-Control': 'no-cache'
+      });
+      res.end(payload);
     })
     .catch(function (err) {
       if (!res.headersSent) {
         sendJson(res, err && err.isTimeout ? 504 : 502, {
-          error: 'Upstream playlist proxy error',
-          details: err.message
+          error: 'tim-streams.com stream directory error',
+          details: err && err.message ? err.message : 'Unknown error'
         });
       }
     });
@@ -2015,16 +1691,8 @@ function handleServerRequest(req, res) {
     handlePpvProxy(reqUrl, res);
     return;
   }
-  if (reqUrl.pathname === '/api/thetvapp/streams') {
-    handleTheTvAppStreamsProxy(reqUrl, res);
-    return;
-  }
-  if (reqUrl.pathname === '/api/thetvapp/embed') {
-    handleTheTvAppEmbedProxy(reqUrl, res);
-    return;
-  }
-  if (reqUrl.pathname === '/api/thetvapp/playlist') {
-    handleTheTvAppPlaylistProxy(reqUrl, res);
+  if (reqUrl.pathname === '/api/timstreams/streams') {
+    handleTimStreamsProxy(reqUrl, res);
     return;
   }
   if (reqUrl.pathname === '/api/strmfree/streams') {
@@ -2413,5 +2081,7 @@ module.exports = {
   handleServerRequest: handleServerRequest,
   dispatchApiRequest: dispatchApiRequest,
   extractCfpArticlePlainText: extractCfpArticlePlainText,
-  parseCommitteeG6SelectionFromText: parseCommitteeG6SelectionFromText
+  parseCommitteeG6SelectionFromText: parseCommitteeG6SelectionFromText,
+  parseEasternLocalTimestamp: parseEasternLocalTimestamp,
+  normalizeTimStreamsList: normalizeTimStreamsList
 };

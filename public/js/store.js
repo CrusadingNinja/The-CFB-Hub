@@ -80,11 +80,11 @@ const initialState = {
   teamPageLoading: false,
   teamPageError: null,
 
-  // Watch / Multiview (ppv.st, thetvapp.plus & strmfree.pk)
+  // Watch / Multiview (ppv.st, tim-streams.com & strmfree.pk)
   watchSource: (() => {
     try {
       const saved = localStorage.getItem('cfb_watch_source');
-      return saved === 'thetvapp' || saved === 'strmfree' ? saved : 'ppv';
+      return saved === 'timstreams' || saved === 'strmfree' ? saved : 'ppv';
     } catch (err) {
       return 'ppv';
     }
@@ -94,11 +94,11 @@ const initialState = {
   ppvTimestamp: 0,
   ppvLoading: false,
   ppvError: null,
-  tvAppStreams: [],
-  tvAppCategories: [],
-  tvAppTimestamp: 0,
-  tvAppLoading: false,
-  tvAppError: null,
+  timStreams: [],
+  timStreamsCategories: [],
+  timStreamsTimestamp: 0,
+  timStreamsLoading: false,
+  timStreamsError: null,
   strmFreeStreams: [],
   strmFreeCategories: [],
   strmFreeTimestamp: 0,
